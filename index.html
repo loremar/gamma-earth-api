@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>S2DR3 Two-Date Compare</title>
+  <title>Gamma Earth S2DR3 Two-Date Compare</title>
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
   <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.js"></script>
   <link href="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.css" rel="stylesheet"/>
@@ -200,16 +200,19 @@
   beforeMap.once('load', addGammaAttribution);
 
   // |- CHECK FOR MISSING DATES
-  // date label from your existing ?ds= param
-  const dateStr = (Array.isArray(ds) && ds[3]) ? ds[3] : 'this date';
-  document.getElementById('dateLeft').textContent  = dateStr;
-  document.getElementById('dateRight').textContent = dateStr;
+  function formatDate(yyyymmdd){
+    return (/^\d{8}$/.test(yyyymmdd))
+      ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
+      : yyyymmdd;
+  }
   
-  // Use the FIRST raster tile template from each side (your styles already define these)
-  const leftTmpl  = mapStyle1.sources.s2.tiles[0];      // RGB S2
-  const rightTmpl = mapStyle2.sources.s2dr3.tiles[0];   // RGB S2DR3
+  // Put the two dates into the badges (if those spans exist)
+  const dl = document.getElementById('dateLeft');
+  const dr = document.getElementById('dateRight');
+  if (dl) dl.textContent = formatDate(d1);
+  if (dr) dr.textContent = formatDate(d2);
   
-  // Minimal lon/lat -> tile
+  // lon/lat -> tile coords
   function lonLatToTile(lon, lat, z){
     const x = Math.floor((lon + 180) / 360 * Math.pow(2, z));
     const y = Math.floor(
@@ -219,25 +222,28 @@
     return {x, y};
   }
   
-  // Try to load one tile; if it errors, show the note
-  function probeTile(url, onFail){
+  // Probe a single raster tile; on failure show the side's note
+  function probeOne(date, idx, side){
+    const tmpl = tilesFor(date, idx)[0];               // uses your tilesFor()
+    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
+    const {x, y} = lonLatToTile(lon, lat, zCheck);
+    const url = tmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y)
+      + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // cache-bust
+  
     const img = new Image();
-    img.onload = () => {};                 // success: do nothing
-    img.onerror = () => onFail();          // fail: show note
     img.crossOrigin = 'anonymous';
-    img.src = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // cache-bust
+    img.onload  = () => {}; // ok
+    img.onerror = () => {
+      const noteId = side === 'left' ? 'noteLeft' : 'noteRight';
+      const el = document.getElementById(noteId);
+      if (el) el.style.display = 'block';
+    };
+    img.src = url;
   }
   
-  // Pick a moderate zoom to probe near the current center
-  const zCheck = Math.max(8, Math.min(12, Math.round(z)));
-  const {x, y} = lonLatToTile(center[0], center[1], zCheck);
-  
-  // Build the two test URLs and probe
-  const leftURL  = leftTmpl .replace('{z}', zCheck).replace('{x}', x).replace('{y}', y);
-  const rightURL = rightTmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y);
-  probeTile(leftURL,  () => document.getElementById('noteLeft').style.display  = 'block');
-  probeTile(rightURL, () => document.getElementById('noteRight').style.display = 'block');
-
+  // Kick off probes for the two sides
+  probeOne(d1, index, 'left');
+  probeOne(d2, index, 'right');
   // CHECK FOR MISSING DATES -|
   
   // Optional: show a sample tile URL for quick debugging
