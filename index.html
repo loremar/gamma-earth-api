@@ -173,7 +173,28 @@
   // Attribution
   const attr = document.getElementById("attribution");
   attr.innerHTML = '<a href="https://gamma.earth" target="_blank" rel="noopener">© Gamma Earth</a>';
+  
+  function addGammaAttribution() {
+    const inners = document.querySelectorAll('.mapboxgl-ctrl-attrib-inner');
+    inners.forEach(el => {
+      // avoid duplicating on reloads
+      if (el.querySelector('.gamma-earth')) return;
+  
+      const sep = document.createTextNode(' | ');
+      const a = document.createElement('a');
+      a.href = 'https://gamma.earth';
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.className = 'gamma-earth';
+      a.textContent = '© Gamma Earth';
+      el.append(sep, a);
+    });
+  }
 
+  // call once both maps are created (afterMap is fine)
+  afterMap.once('load', addGammaAttribution);
+  // if you also show the control on the beforeMap, add this too:
+  beforeMap.once('load', addGammaAttribution);
 
   // Optional: show a sample tile URL for quick debugging
   function showDebug() {
@@ -185,5 +206,6 @@
   }
   beforeMap.on("load", showDebug);
 </script>
+  
 </body>
 </html>
