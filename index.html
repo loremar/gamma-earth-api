@@ -27,10 +27,14 @@
       font:12px/20px Helvetica,Arial,sans-serif;
     }
     
-    .mapbox-attribution-container a {
-      color: inherit;
-      text-decoration: none;
-    }
+    .missing-note{
+        position:absolute; top:10px; padding:6px 10px;
+        background:#e53935; color:#fff; border-radius:6px;
+        font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        z-index:9999; pointer-events:none;
+      }
+      #noteLeft{ left:10px; }
+      #noteRight{ right:10px; }
 
     /* New: per-map date badges (one on each side) */
     .date-badge {
@@ -52,6 +56,8 @@
 <body>
   <nav id="menuL" class="menu"></nav>
   <nav id="menuR" class="menu"></nav>
+  <div id="noteLeft"  class="missing-note" style="display:none">No preview for <span id="dateLeft"></span></div>
+  <div id="noteRight" class="missing-note" style="display:none">No preview for <span id="dateRight"></span></div>
   <div id="comparison-container">
     <div id="before" class="map"></div>
     <div id="after" class="map"></div>
@@ -193,6 +199,47 @@
   // if you also show the control on the beforeMap, add this too:
   beforeMap.once('load', addGammaAttribution);
 
+  // |- CHECK FOR MISSING DATES
+  // date label from your existing ?ds= param
+  const dateStr = (Array.isArray(ds) && ds[3]) ? ds[3] : 'this date';
+  document.getElementById('dateLeft').textContent  = dateStr;
+  document.getElementById('dateRight').textContent = dateStr;
+  
+  // Use the FIRST raster tile template from each side (your styles already define these)
+  const leftTmpl  = mapStyle1.sources.s2.tiles[0];      // RGB S2
+  const rightTmpl = mapStyle2.sources.s2dr3.tiles[0];   // RGB S2DR3
+  
+  // Minimal lon/lat -> tile
+  function lonLatToTile(lon, lat, z){
+    const x = Math.floor((lon + 180) / 360 * Math.pow(2, z));
+    const y = Math.floor(
+      (1 - Math.log(Math.tan(lat * Math.PI/180) + 1/Math.cos(lat * Math.PI/180)) / Math.PI) / 2
+      * Math.pow(2, z)
+    );
+    return {x, y};
+  }
+  
+  // Try to load one tile; if it errors, show the note
+  function probeTile(url, onFail){
+    const img = new Image();
+    img.onload = () => {};                 // success: do nothing
+    img.onerror = () => onFail();          // fail: show note
+    img.crossOrigin = 'anonymous';
+    img.src = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // cache-bust
+  }
+  
+  // Pick a moderate zoom to probe near the current center
+  const zCheck = Math.max(8, Math.min(12, Math.round(z)));
+  const {x, y} = lonLatToTile(center[0], center[1], zCheck);
+  
+  // Build the two test URLs and probe
+  const leftURL  = leftTmpl .replace('{z}', zCheck).replace('{x}', x).replace('{y}', y);
+  const rightURL = rightTmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y);
+  probeTile(leftURL,  () => document.getElementById('noteLeft').style.display  = 'block');
+  probeTile(rightURL, () => document.getElementById('noteRight').style.display = 'block');
+
+  // CHECK FOR MISSING DATES -|
+  
   // Optional: show a sample tile URL for quick debugging
   function showDebug() {
     const dbg = document.getElementById("debug");
@@ -201,7 +248,8 @@
     dbg.style.display = "block";
     dbg.textContent = `Sample tile: ${sample}`;
   }
-  beforeMap.on("load", showDebug);
+  //ENABLE or DISABLE COMMENT FOR DEBUG
+  //beforeMap.on("load", showDebug);
 </script>
   
 </body>
