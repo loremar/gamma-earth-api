@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>S2DR3 Compare (two dates)</title>
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
+  <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.js"></script>
+  <link href="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.css" rel="stylesheet"/>
+
+  <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-compare/v0.4.0/mapbox-gl-compare.js"></script>
+  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-compare/v0.4.0/mapbox-gl-compare.css"/>
+
+  <style>
+    html, body { height:100%; margin:0; background:#111; }
+    .map { position:absolute; top:0; bottom:0; width:100%; }
+    #comparison-container { position:absolute; top:0; bottom:0; width:100%; }
+    .menu {
+      background:#fff; position:absolute; z-index:10; top:10px;
+      border-radius:3px; width:140px; border:1px solid rgba(0,0,0,.25);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    }
+    #menuL { left:10px; }
+    #menuR { right:10px; }
+    .menu a {
+      font-size:13px; color:#404040; display:block; padding:10px; text-decoration:none;
+      border-bottom:1px solid rgba(0,0,0,.15); text-align:center;
+    }
+    .menu a:last-child { border:none; }
+    .menu a:hover { background:#f8f8f8; }
+    .menu a.active { background:#3887be; color:#fff; }
+    .mapbox-attribution-container {
+      position:absolute; bottom:0; right:0; display:block; padding:0 6px;
+      font-size:12px; line-height:20px; background:rgba(255,255,255,.6); color:#222;
+      border-top-left-radius:3px;
+    }
+  </style>
+</head>
+<body>
+
+<nav id="menuL" class="menu"></nav>
+<nav id="menuR" class="menu"></nav>
+<div id="comparison-container">
+  <div id="before" class="map"></div>
+  <div id="after" class="map"></div>
+</div>
+<div id="attribution" class="mapbox-attribution-container">© ESA | © Gamma Earth</div>
+
+<script>
+  // --- Params ---
+  const q = new URLSearchParams(location.search);
+  const hash = (location.hash || "#15/0/0").slice(1).split("/");
+  const Z = Number(hash[0]) || 15;
+  const LAT = Number(hash[1]) || 0;
+  const LON = Number(hash[2]) || 0;
+
+  const dsStr = q.get("ds");           // e.g. "MG-T38KMC-e0a95e3ea"
+  const d1 = q.get("d1");              // e.g. "20230816"
+  const d2 = q.get("d2");              // e.g. "20230826"
+  const indexParam = (q.get("index") || "rgb").toLowerCase(); // rgb | ndvi | fcir
+
+  if (!dsStr || !d1 || !d2) {
+    alert("Missing required params. Example:\n?ds=MG-T38KMC-e0a95e3ea&d1=20230816&d2=20230826&index=rgb#15/-20.5228/45.023");
+  }
+
+  const [country, tile, uid] = dsStr.split("-");
+  const pid1 = `${tile}-${d1}-${uid}`;
+  const pid2 = `${tile}-${d2}-${uid}`;
+
+  // --- Tokens & tile root (same as your demo) ---
+  const RASTER_TOKEN = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800";
+  const ROOT = `https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png?token=${RASTER_TOKEN}&filename=sentinel-s2dr3/${country}/${tile}`;
+  const TIF_TAIL = ".tif&render=rgb&disable_cache=true";
+
+  function tilesFor(pid, kind) {
+    // kind: 'rgb' | 'ndvi' | 'fcir'
+    const suffix = (kind === "rgb") ? "TCI" : (kind === "ndvi" ? "NDVI" : "IRP");
+    return `${ROOT}/${"S2L2Ax10_" + pid + "_" + suffix}${TIF_TAIL}`;
+  }
+
+  // Precompute all sources so we can toggle visibility without reloading styles
+  const leftTiles  = { rgb: tilesFor(pid1, "rgb"), ndvi: tilesFor(pid1, "ndvi"), fcir: tilesFor(pid1, "fcir") };
+  const rightTiles = { rgb: tilesFor(pid2, "rgb"), ndvi: tilesFor(pid2, "ndvi"), fcir: tilesFor(pid2, "fcir") };
+
+  // --- Mapbox setup ---
+  mapboxgl.accessToken = "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag";
+
+  function makeStyle(side) {
+    const t = (side === "left") ? leftTiles : rightTiles;
+    return {
+      version: 8,
+      sources: {
+        s2dr3_rgb:  { type: "raster", tiles: [t.rgb],  tileSize: 256 },
+        s2dr3_ndvi: { type: "raster", tiles: [t.ndvi], tileSize: 256 },
+        s2dr3_fcir: { type: "raster", tiles: [t.fcir], tileSize: 256 },
+      },
+      layers: [
+        { id: "S2DR3 RGB",  source: "s2dr3_rgb",  type: "raster", minzoom: 0, maxzoom: 19 },
+        { id: "S2DR3 NDVI", source: "s2dr3_ndvi", type: "raster", minzoom: 0, maxzoom: 19 },
+        { id: "S2DR3 B11,B8,B5", source: "s2dr3_fcir", type: "raster", minzoom: 0, maxzoom: 19 },
+      ]
+    };
+  }
+
+  const center = [LON, LAT];
+
+  const beforeMap = new mapboxgl.Map({
+    container: "before",
+    style: makeStyle("left"),
+    center, zoom: Z, maxZoom: 18, hash: true
+  });
+
+  const afterMap = new mapboxgl.Map({
+    container: "after",
+    style: makeStyle("right"),
+    center, zoom: Z, maxZoom: 18
+  });
+
+  // Slider
+  const compare = new mapboxgl.Compare(beforeMap, afterMap, "#comparison-container");
+
+  // Simple menu that toggles both maps
+  const LAYERS = ["S2DR3 RGB", "S2DR3 NDVI", "S2DR3 B11,B8,B5"];
+  const MENU_IDS = ["rgb", "ndvi", "fcir"]; // same order as LAYERS
+
+  function setActive(kind) {
+    LAYERS.forEach((layerId, i) => {
+      const visible = (MENU_IDS[i] === kind) ? "visible" : "none";
+      beforeMap.setLayoutProperty(layerId, "visibility", visible);
+      afterMap.setLayoutProperty(layerId, "visibility", visible);
+
+      // menu state
+      document.getElementById(`btn-${MENU_IDS[i]}`).className = (visible === "visible") ? "active" : "";
+    });
+  }
+
+  function buildMenu() {
+    const menuL = document.getElementById("menuL");
+    const menuR = document.getElementById("menuR");
+    MENU_IDS.forEach((id, i) => {
+      const title = LAYERS[i];
+      [menuL, menuR].forEach(menu => {
+        const a = document.createElement("a");
+        a.id = `btn-${id}`;
+        a.href = "#";
+        a.textContent = title;
+        a.onclick = (e) => { e.preventDefault(); setActive(id); };
+        menu.appendChild(a);
+      });
+    });
+  }
+
+  function initVisibility() {
+    // Hide all, then show the requested one
+    LAYERS.forEach(id => {
+      beforeMap.setLayoutProperty(id, "visibility", "none");
+      afterMap.setLayoutProperty(id, "visibility", "none");
+    });
+    const initial = ["rgb","ndvi","fcir"].includes(indexParam) ? indexParam : "rgb";
+    setActive(initial);
+  }
+
+  beforeMap.on("load", () => {
+    buildMenu();
+    initVisibility();
+  });
+</script>
+
+<!-- Minimal GA (optional): remove if not needed -->
+<!-- <script async src="https://www.googletagmanager.com/gtag/js?id=G-PB0RTR8GJZ"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-PB0RTR8GJZ');</script> -->
+
+</body>
+</html>
