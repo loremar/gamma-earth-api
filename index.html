@@ -21,33 +21,22 @@
     .menu a:last-child { border:none; }
     .menu a.active { background:#3887be; color:#fff; }
 
-    .mapbox-attribution-container {
-      bottom:0; right:0; position:absolute; padding:0 6px;
-      background:rgba(255,255,255,.5); color:rgba(0,0,0,.75);
-      font:12px/20px Helvetica,Arial,sans-serif;
-    }
-    
     .missing-note{
-        position:absolute; top:10px; padding:6px 10px;
-        background:#e53935; color:#fff; border-radius:6px;
-        font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        z-index:9999; pointer-events:none;
-      }
-      #noteLeft{ left:10px; }
-      #noteRight{ right:10px; }
+      position:absolute; top:10px; padding:6px 10px;
+      background:#e53935; color:#fff; border-radius:6px;
+      font:12px/1.2 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      z-index:9999; pointer-events:none;
+    }
+    #noteLeft{ left:10px; }
+    #noteRight{ right:10px; }
 
-    /* New: per-map date badges (one on each side) */
     .date-badge {
       position:absolute; top:10px; left:50%; transform:translateX(-50%);
       background:rgba(0,0,0,.65); color:#fff; padding:6px 10px; border-radius:4px;
       font:12px/1.2 sans-serif; letter-spacing:.3px; z-index:6; pointer-events:none;
       box-shadow:0 0 0 1px rgba(255,255,255,.15) inset;
     }
-
-    /* Optional: nudge badges down if they overlap menus */
-    @media (min-width: 640px) {
-      .date-badge { top:52px; }
-    }
+    @media (min-width: 640px) { .date-badge { top:52px; } }
 
     #debug { position:absolute; left:50%; transform:translateX(-50%); bottom:8px; z-index:6;
              background:rgba(17,17,17,.7); color:#eee; font:11px/1.4 monospace; padding:6px 8px; border-radius:4px; display:none; }
@@ -58,23 +47,34 @@
   <nav id="menuR" class="menu"></nav>
   <div id="noteLeft"  class="missing-note" style="display:none">No preview for <span id="dateLeft"></span></div>
   <div id="noteRight" class="missing-note" style="display:none">No preview for <span id="dateRight"></span></div>
+
   <div id="comparison-container">
     <div id="before" class="map"></div>
     <div id="after" class="map"></div>
   </div>
-  <div id="attribution" class="mapbox-attribution-container"></div>
+
   <div id="debug"></div>
 
 <script>
-  // --- Params ---
+  // -------- Params (robust) --------
   const params = new URLSearchParams(location.search);
-  const ds = (params.get("ds") || "").split("-");
-  const d1 = params.get("d1");
-  const d2 = params.get("d2");
+
+  // Accept ds with or without a trailing -YYYYMMDD
+  const rawDs = params.get("ds") || "";
+  const parts = rawDs.split("-");
+  const [country, tile, uid] = [parts[0], parts[1], parts[2]];
+  const trailingDate = parts[3] && /^\d{8}$/.test(parts[3]) ? parts[3] : null;
+
+  let d1 = params.get("d1") || "";
+  let d2 = params.get("d2") || "";
+  if (!d1 && trailingDate) d1 = trailingDate;
+  if (!d2 && trailingDate) d2 = trailingDate;
+
   const index = (params.get("index") || "rgb").toLowerCase();
 
-  if (ds.length < 3 || !d1 || !d2) {
-    document.body.innerHTML = "<p style='color:#fff;padding:20px;font:16px sans-serif'>Missing or bad params. Use ?ds=COUNTRY-TILE-UID&d1=YYYYMMDD&d2=YYYYMMDD&index=rgb#15/lat/lon</p>";
+  if (!country || !tile || !uid || !d1 || !d2) {
+    document.body.innerHTML =
+      "<p style='color:#fff;padding:20px;font:16px sans-serif'>Missing or bad params. Use ?ds=COUNTRY-TILE-UID&d1=YYYYMMDD&d2=YYYYMMDD&index=rgb#15/lat/lon</p>";
     throw new Error("Bad params");
   }
 
@@ -82,7 +82,6 @@
   const [zoomStr, latStr, lonStr] = hash.split("/");
   const zoom = Number(zoomStr), lat = Number(latStr), lon = Number(lonStr);
 
-  const country = ds[0], tile = ds[1], uid = ds[2];
   const pid = (date) => `${tile}-${uid}-${date}`;
 
   function productSuffix(idx) {
@@ -92,74 +91,61 @@
     return "_TCI";
   }
 
-  const token = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800";
-  const base = "https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png";
-  const tail = ".tif&render=rgb&disable_cache=true";
+  // -------- Tiles --------
+  const token = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800"; // demo token
+  const base  = "https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png";
+  const tail  = ".tif&render=rgb&disable_cache=true";
+  const vtag  = `_v=${encodeURIComponent([d1,d2,index].join("-"))}`; // light cache-buster per combination
 
   function tilesFor(date, idx) {
     const P = pid(date);
     const root = `${base}?token=${token}&filename=sentinel-s2dr3/${country}/${tile}/${P}`;
     const suffix = productSuffix(idx);
-    return [`${root}/S2L2Ax10_${P}${suffix}${tail}`];
+    return [`${root}/S2L2Ax10_${P}${suffix}${tail}&${vtag}`];
   }
 
-  // Mapbox token
-  mapboxgl.accessToken = "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag";
-
-  // Base style: Mapbox Satellite (basemap)
+  // -------- Mapbox --------
+  mapboxgl.accessToken = "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag"; // demo token
   const satelliteStyle = "mapbox://styles/mapbox/satellite-v9";
 
-  // Create maps with the satellite style
   const beforeMap = new mapboxgl.Map({
-    container: "before",
-    style: satelliteStyle,
-    center: [lon, lat],
-    zoom: zoom,
-    maxZoom: 18
+    container: "before", style: satelliteStyle, center: [lon, lat], zoom, maxZoom: 18
+  });
+  const afterMap  = new mapboxgl.Map({
+    container: "after",  style: satelliteStyle, center: [lon, lat], zoom, maxZoom: 18
   });
 
-  const afterMap = new mapboxgl.Map({
-    container: "after",
-    style: satelliteStyle,
-    center: [lon, lat],
-    zoom: zoom,
-    maxZoom: 18
-  });
-
-  // Compare slider
   const compare = new mapboxgl.Compare(beforeMap, afterMap, "#comparison-container", {});
 
-  // Helper: add our raster overlay + a date badge to a map
+  // -------- Overlays + badges --------
   function addOverlay(map, date, idx, side) {
     const srcId = `s2dr3_${side}`;
     const lyrId = `s2dr3_${side}_layer`;
 
-    // source + layer (on top of satellite)
     map.addSource(srcId, { type: "raster", tiles: tilesFor(date, idx), tileSize: 256 });
     map.addLayer({
       id: lyrId, type: "raster", source: srcId, minzoom: 0, maxzoom: 19,
       paint: { "raster-resampling": "nearest" }
     });
 
-    // date badge
     const badge = document.createElement("div");
     badge.className = "date-badge";
     badge.textContent = formatDate(date);
     map.getContainer().appendChild(badge);
   }
 
-  function formatDate(yyyymmdd) {
-    if (!/^\d{8}$/.test(yyyymmdd)) return yyyymmdd;
-    return `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`;
+  function formatDate(yyyymmdd){
+    return (/^\d{8}$/.test(yyyymmdd))
+      ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
+      : yyyymmdd;
   }
 
   beforeMap.on("load", () => addOverlay(beforeMap, d1, index, "before"));
-  afterMap.on("load",  () => addOverlay(afterMap,  d2, index, "after"));
+  afterMap .on("load", () => addOverlay(afterMap,  d2, index, "after"));
 
-  // Left menu: pick index (reload keeps ds & dates)
-  const opts = ["rgb","ndvi","irp"];
+  // -------- Menus --------
   const menuL = document.getElementById("menuL");
-  opts.forEach(o => {
+  ["rgb","ndvi","irp"].forEach(o => {
     const a = document.createElement("a");
     a.id = `idx_${o}`;
     a.textContent = o.toUpperCase();
@@ -168,7 +154,6 @@
     menuL.appendChild(a);
   });
 
-  // Right menu: label
   const menuR = document.getElementById("menuR");
   const b = document.createElement("a");
   b.textContent = "S2DR3";
@@ -176,43 +161,28 @@
   b.href = "#";
   menuR.appendChild(b);
 
-  // Attribution
+  // -------- Attribution: add "© Gamma Earth" --------
   function addGammaAttribution() {
     const inners = document.querySelectorAll('.mapboxgl-ctrl-attrib-inner');
     inners.forEach(el => {
-      // avoid duplicating on reloads
-      if (el.querySelector('.gamma-earth')) return;
-  
+      if (el.querySelector('.gamma-earth')) return; // avoid duplication
       const sep = document.createTextNode(' | ');
       const a = document.createElement('a');
-      a.href = 'https://gamma.earth';
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.className = 'gamma-earth';
-      a.textContent = '© Gamma Earth';
+      a.href = 'https://gamma.earth'; a.target = '_blank'; a.rel = 'noopener';
+      a.className = 'gamma-earth'; a.textContent = '© Gamma Earth';
       el.append(sep, a);
     });
   }
-
-  // call once both maps are created (afterMap is fine)
   afterMap.once('load', addGammaAttribution);
-  // if you also show the control on the beforeMap, add this too:
   beforeMap.once('load', addGammaAttribution);
 
-  // |- CHECK FOR MISSING DATES
-  function formatDate(yyyymmdd){
-    return (/^\d{8}$/.test(yyyymmdd))
-      ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
-      : yyyymmdd;
-  }
-  
-  // Put the two dates into the badges (if those spans exist)
+  // -------- Missing-date probes (show red note if a side is missing) --------
+  // Put the two dates into the note badges
   const dl = document.getElementById('dateLeft');
   const dr = document.getElementById('dateRight');
   if (dl) dl.textContent = formatDate(d1);
   if (dr) dr.textContent = formatDate(d2);
-  
-  // lon/lat -> tile coords
+
   function lonLatToTile(lon, lat, z){
     const x = Math.floor((lon + 180) / 360 * Math.pow(2, z));
     const y = Math.floor(
@@ -221,18 +191,17 @@
     );
     return {x, y};
   }
-  
-  // Probe a single raster tile; on failure show the side's note
+
   function probeOne(date, idx, side){
-    const tmpl = tilesFor(date, idx)[0];               // uses your tilesFor()
+    const tmpl = tilesFor(date, idx)[0];
     const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
     const {x, y} = lonLatToTile(lon, lat, zCheck);
     const url = tmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y)
-      + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // cache-bust
-  
+      + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now();
+
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload  = () => {}; // ok
+    img.onload  = () => {};
     img.onerror = () => {
       const noteId = side === 'left' ? 'noteLeft' : 'noteRight';
       const el = document.getElementById(noteId);
@@ -240,13 +209,11 @@
     };
     img.src = url;
   }
-  
-  // Kick off probes for the two sides
+
   probeOne(d1, index, 'left');
   probeOne(d2, index, 'right');
-  // CHECK FOR MISSING DATES -|
-  
-  // Optional: show a sample tile URL for quick debugging
+
+  // -------- Optional debug --------
   function showDebug() {
     const dbg = document.getElementById("debug");
     const sample = tilesFor(d1, index)[0]
@@ -254,9 +221,7 @@
     dbg.style.display = "block";
     dbg.textContent = `Sample tile: ${sample}`;
   }
-  //ENABLE or DISABLE COMMENT FOR DEBUG
-  //beforeMap.on("load", showDebug);
+  // beforeMap.on("load", showDebug);
 </script>
-  
 </body>
 </html>
