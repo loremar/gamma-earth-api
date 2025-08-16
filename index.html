@@ -95,7 +95,7 @@
   const token = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800"; // demo token
   const base  = "https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png";
   const tail  = ".tif&render=rgb&disable_cache=true";
-  const vtag  = `_v=${encodeURIComponent([d1,d2,index].join("-"))}`; // light cache-buster per combination
+  const vtag  = `_v=${encodeURIComponent([d1,d2,index].join("-"))}`; // light cache-buster per combo
 
   function tilesFor(date, idx) {
     const P = pid(date);
@@ -115,12 +115,20 @@
     container: "after",  style: satelliteStyle, center: [lon, lat], zoom, maxZoom: 18
   });
 
-  const compare = new mapboxgl.Compare(beforeMap, afterMap, "#comparison-container", {});
+  // -------- Helpers --------
+  function formatDate(yyyymmdd){
+    return (/^\d{8}$/.test(yyyymmdd))
+      ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
+      : yyyymmdd;
+  }
 
-  // -------- Overlays + badges --------
+  // idempotent overlay adder (safe to call multiple times)
   function addOverlay(map, date, idx, side) {
     const srcId = `s2dr3_${side}`;
     const lyrId = `s2dr3_${side}_layer`;
+
+    if (map.getLayer(lyrId))  map.removeLayer(lyrId);
+    if (map.getSource(srcId)) map.removeSource(srcId);
 
     map.addSource(srcId, { type: "raster", tiles: tilesFor(date, idx), tileSize: 256 });
     map.addLayer({
@@ -128,20 +136,62 @@
       paint: { "raster-resampling": "nearest" }
     });
 
+    // remove any old badge then add a fresh one
+    const cont = map.getContainer();
+    cont.querySelectorAll(".date-badge").forEach(n => n.remove());
     const badge = document.createElement("div");
     badge.className = "date-badge";
     badge.textContent = formatDate(date);
-    map.getContainer().appendChild(badge);
+    cont.appendChild(badge);
   }
 
-  function formatDate(yyyymmdd){
-    return (/^\d{8}$/.test(yyyymmdd))
-      ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
-      : yyyymmdd;
+  function addGammaAttribution() {
+    const inners = document.querySelectorAll('.mapboxgl-ctrl-attrib-inner');
+    inners.forEach(el => {
+      if (el.querySelector('.gamma-earth')) return; // avoid duplication
+      const sep = document.createTextNode(' | ');
+      const a = document.createElement('a');
+      a.href = 'https://gamma.earth'; a.target = '_blank'; a.rel = 'noopener';
+      a.className = 'gamma-earth'; a.textContent = '© Gamma Earth';
+      el.append(sep, a);
+    });
   }
 
-  beforeMap.on("load", () => addOverlay(beforeMap, d1, index, "before"));
-  afterMap .on("load", () => addOverlay(afterMap,  d2, index, "after"));
+  function lonLatToTile(lon, lat, z){
+    const x = Math.floor((lon + 180) / 360 * Math.pow(2, z));
+    const y = Math.floor(
+      (1 - Math.log(Math.tan(lat * Math.PI/180) + 1/Math.cos(lat * Math.PI/180)) / Math.PI) / 2
+      * Math.pow(2, z)
+    );
+    return {x, y};
+  }
+
+  function probeOne(date, idx, side){
+    const tmpl = tilesFor(date, idx)[0];
+    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
+    const {x, y} = lonLatToTile(lon, lat, zCheck);
+    const url = tmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y)
+      + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // bust cache
+
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload  = () => {};
+    img.onerror = () => {
+      const noteId = side === 'left' ? 'noteLeft' : 'noteRight';
+      const el = document.getElementById(noteId);
+      if (el) el.style.display = 'block';
+    };
+    img.src = url;
+  }
+
+  // Promise helper: resolve once a map fires an event
+  const once = (map, evt) => new Promise(res => map.once(evt, res));
+
+  // Put dates into the red “missing” badges now
+  const dl = document.getElementById('dateLeft');
+  const dr = document.getElementById('dateRight');
+  if (dl) dl.textContent = formatDate(d1);
+  if (dr) dr.textContent = formatDate(d2);
 
   // -------- Menus --------
   const menuL = document.getElementById("menuL");
@@ -161,68 +211,40 @@
   b.href = "#";
   menuR.appendChild(b);
 
-  // -------- Attribution: add "© Gamma Earth" --------
-  function addGammaAttribution() {
-    const inners = document.querySelectorAll('.mapboxgl-ctrl-attrib-inner');
-    inners.forEach(el => {
-      if (el.querySelector('.gamma-earth')) return; // avoid duplication
-      const sep = document.createTextNode(' | ');
-      const a = document.createElement('a');
-      a.href = 'https://gamma.earth'; a.target = '_blank'; a.rel = 'noopener';
-      a.className = 'gamma-earth'; a.textContent = '© Gamma Earth';
-      el.append(sep, a);
-    });
-  }
-  afterMap.once('load', addGammaAttribution);
-  beforeMap.once('load', addGammaAttribution);
+  // -------- Init (ordered) --------
+  (async function init() {
+    // 1) wait for both base styles to load
+    await Promise.all([ once(beforeMap, 'load'), once(afterMap, 'load') ]);
 
-  // -------- Missing-date probes (show red note if a side is missing) --------
-  // Put the two dates into the note badges
-  const dl = document.getElementById('dateLeft');
-  const dr = document.getElementById('dateRight');
-  if (dl) dl.textContent = formatDate(d1);
-  if (dr) dr.textContent = formatDate(d2);
+    // 2) add raster overlays (left/right)
+    addOverlay(beforeMap, d1, index, 'before');
+    addOverlay(afterMap,  d2, index, 'after');
 
-  function lonLatToTile(lon, lat, z){
-    const x = Math.floor((lon + 180) / 360 * Math.pow(2, z));
-    const y = Math.floor(
-      (1 - Math.log(Math.tan(lat * Math.PI/180) + 1/Math.cos(lat * Math.PI/180)) / Math.PI) / 2
-      * Math.pow(2, z)
-    );
-    return {x, y};
-  }
+    // 3) build the compare slider AFTER overlays exist
+    new mapboxgl.Compare(beforeMap, afterMap, '#comparison-container', {});
 
-  function probeOne(date, idx, side){
-    const tmpl = tilesFor(date, idx)[0];
-    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
-    const {x, y} = lonLatToTile(lon, lat, zCheck);
-    const url = tmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y)
-      + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now();
+    // 4) attribution + missing-date probes
+    addGammaAttribution();
+    probeOne(d1, index, 'left');
+    probeOne(d2, index, 'right');
 
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload  = () => {};
-    img.onerror = () => {
-      const noteId = side === 'left' ? 'noteLeft' : 'noteRight';
-      const el = document.getElementById(noteId);
-      if (el) el.style.display = 'block';
-    };
-    img.src = url;
-  }
-
-  probeOne(d1, index, 'left');
-  probeOne(d2, index, 'right');
+    // 5) nudge a repaint just in case
+    beforeMap.resize();
+    afterMap.resize();
+  })();
 
   // -------- Optional debug --------
   function showDebug() {
     const dbg = document.getElementById("debug");
+    if (!dbg) return;
     const sample = tilesFor(d1, index)[0]
       .replace("{z}","12").replace("{x}","2048").replace("{y}","1363");
     dbg.style.display = "block";
     dbg.textContent = `Sample tile: ${sample}`;
   }
-  //enable or disable to debug
-  beforeMap.on("load", showDebug);
+  // Enable for troubleshooting:
+  // beforeMap.on("load", showDebug);
 </script>
+
 </body>
 </html>
