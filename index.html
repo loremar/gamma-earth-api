@@ -82,157 +82,83 @@
   const [zoomStr, latStr, lonStr] = hash.split("/");
   const zoom = Number(zoomStr), lat = Number(latStr), lon = Number(lonStr);
 
+  // -------- Gamma Earth COG tiler (this replaces Digifarm) --------
+  function productSuffix(idx) {
+    if (idx === "rgb") return "_TCI.tif";
+    if (idx === "ndvi") return "_NDVI.tif";
+    if (idx === "irp" || idx === "fcir") return "_IRP.tif";
+    return "_TCI.tif";
+  }
+  const lambdaBase =
+    "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
+
   const pid = (date) => `${tile}-${uid}-${date}`;
 
-  function productSuffix(idx) {
-    if (idx === "rgb") return "_TCI";
-    if (idx === "ndvi") return "_NDVI";
-    if (idx === "irp" || idx === "fcir") return "_IRP";
-    return "_TCI";
-  }
-
-  // -------- DF Tiles --------
-  // const token = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800"; // demo token
-  // const base  = "https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png";
-  // const tail  = ".tif&render=rgb&disable_cache=true";
-  // const vtag  = `_v=${encodeURIComponent([d1,d2,index].join("-"))}`; // light cache-buster per combo
-
-  // --- Gamma Earth API tiles (rio-tiler lambda) ---
-  const GE_ROOT = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
-  
-  // optional: light cache-bust per combo (helps when switching index/dates)
-  const vtag = `_v=${encodeURIComponent([d1, d2, index].join("-"))}`;
-  
-  // Build a single tile template URL (Mapbox-style {z}/{x}/{y})
-  function tilesFor(date, idx) {
-    const P = pid(date); // e.g. T38KMC-e0a95e3ea-20230816
-    const prefix = `s3://sentinel-s2dr3/${country}/${tile}/${P}/S2L2Ax10_${P}`;
-  
-    let cogKey, extra = "";
-  
-    if (idx === "rgb") {
-      // True color (3-band)
-      cogKey = `${prefix}_TCI.tif`;
-      extra  = "&bidx=1&bidx=2&bidx=3";
-    } else if (idx === "ndvi") {
-      // Single-band NDVI (apply stretch + colormap)
-      cogKey = `${prefix}_NDVI.tif`;
-      // adjust rescale if your NDVI is 0..1 rather than -1..1
-      extra  = "&rescale=-1,1&colormap_name=RdYlGn";
-    } else if (idx === "irp" || idx === "fcir") {
-      // IRP/FCIR false color (3-band: B11,B8,B5) — adjust bidx if your band order differs
-      cogKey = `${prefix}_IRP.tif`;
-      extra  = "&bidx=1&bidx=2&bidx=3";
-    } else {
-      // default to RGB
-      cogKey = `${prefix}_TCI.tif`;
-      extra  = "&bidx=1&bidx=2&bidx=3";
-    }
-  
-    // If your gateway expects unencoded s3:// you can drop encodeURIComponent
-    const url = `${GE_ROOT}/{z}/{x}/{y}@2x?url=${encodeURIComponent(cogKey)}${extra}&${vtag}`;
-    return [url];
-  }
-
+  // Return a single-item array with the tile template, as Mapbox expects
   function tilesFor(date, idx) {
     const P = pid(date);
-    const root = `${base}?token=${token}&filename=sentinel-s2dr3/${country}/${tile}/${P}`;
+    // IMPORTANT: this mirrors your working page: the s3:// URL is NOT encoded
+    const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
     const suffix = productSuffix(idx);
-    return [`${root}/S2L2Ax10_${P}${suffix}${tail}&${vtag}`];
+    return [`${root}/S2L2Ax10_${P}${suffix}`];
   }
 
-  // -------- Mapbox --------
-  mapboxgl.accessToken = "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag"; // demo token
-  const satelliteStyle = "mapbox://styles/mapbox/satellite-streets-v12";
+  // -------- Mapbox base --------
+  mapboxgl.accessToken =
+    "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag";
+
+  // Use Satellite basemap and overlay our rasters
+  const satelliteStyle = "mapbox://styles/mapbox/satellite-v9";
 
   const beforeMap = new mapboxgl.Map({
-    container: "before", style: satelliteStyle, center: [lon, lat], zoom, maxZoom: 18
+    container: "before",
+    style: satelliteStyle,
+    center: [lon, lat],
+    zoom,
+    maxZoom: 18
   });
-  const afterMap  = new mapboxgl.Map({
-    container: "after",  style: satelliteStyle, center: [lon, lat], zoom, maxZoom: 18
+  const afterMap = new mapboxgl.Map({
+    container: "after",
+    style: satelliteStyle,
+    center: [lon, lat],
+    zoom,
+    maxZoom: 18
   });
 
-  // -------- Helpers --------
-  function formatDate(yyyymmdd){
-    return (/^\d{8}$/.test(yyyymmdd))
-      ? `${yyyymmdd.slice(0,4)}-${yyyymmdd.slice(4,6)}-${yyyymmdd.slice(6,8)}`
-      : yyyymmdd;
-  }
+  // Helper: wait once for a Mapbox event
+  const once = (map, evt) => new Promise((res) => map.once(evt, res));
 
-  // idempotent overlay adder (safe to call multiple times)
+  // Add our raster overlay (built from Gamma Earth) and a date badge
   function addOverlay(map, date, idx, side) {
     const srcId = `s2dr3_${side}`;
     const lyrId = `s2dr3_${side}_layer`;
 
-    if (map.getLayer(lyrId))  map.removeLayer(lyrId);
-    if (map.getSource(srcId)) map.removeSource(srcId);
-
-    map.addSource(srcId, { type: "raster", tiles: tilesFor(date, idx), tileSize: 256 });
+    // If you see blank tiles, try tileSize: 256
+    map.addSource(srcId, { type: "raster", tiles: tilesFor(date, idx), tileSize: 512 });
     map.addLayer({
-      id: lyrId, type: "raster", source: srcId, minzoom: 0, maxzoom: 19,
+      id: lyrId,
+      type: "raster",
+      source: srcId,
+      minzoom: 0,
+      maxzoom: 19,
       paint: { "raster-resampling": "nearest" }
     });
 
-    // remove any old badge then add a fresh one
-    const cont = map.getContainer();
-    cont.querySelectorAll(".date-badge").forEach(n => n.remove());
+    // date badge
     const badge = document.createElement("div");
     badge.className = "date-badge";
     badge.textContent = formatDate(date);
-    cont.appendChild(badge);
+    map.getContainer().appendChild(badge);
   }
 
-  function addGammaAttribution() {
-    const inners = document.querySelectorAll('.mapboxgl-ctrl-attrib-inner');
-    inners.forEach(el => {
-      if (el.querySelector('.gamma-earth')) return; // avoid duplication
-      const sep = document.createTextNode(' | ');
-      const a = document.createElement('a');
-      a.href = 'https://gamma.earth'; a.target = '_blank'; a.rel = 'noopener';
-      a.className = 'gamma-earth'; a.textContent = '© Gamma Earth';
-      el.append(sep, a);
-    });
+  function formatDate(yyyymmdd) {
+    if (!/^\d{8}$/.test(yyyymmdd)) return yyyymmdd;
+    return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
   }
 
-  function lonLatToTile(lon, lat, z){
-    const x = Math.floor((lon + 180) / 360 * Math.pow(2, z));
-    const y = Math.floor(
-      (1 - Math.log(Math.tan(lat * Math.PI/180) + 1/Math.cos(lat * Math.PI/180)) / Math.PI) / 2
-      * Math.pow(2, z)
-    );
-    return {x, y};
-  }
-
-  function probeOne(date, idx, side){
-    const tmpl = tilesFor(date, idx)[0];
-    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
-    const {x, y} = lonLatToTile(lon, lat, zCheck);
-    const url = tmpl.replace('{z}', zCheck).replace('{x}', x).replace('{y}', y)
-      + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // bust cache
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload  = () => {};
-    img.onerror = () => {
-      const noteId = side === 'left' ? 'noteLeft' : 'noteRight';
-      const el = document.getElementById(noteId);
-      if (el) el.style.display = 'block';
-    };
-    img.src = url;
-  }
-
-  // Promise helper: resolve once a map fires an event
-  const once = (map, evt) => new Promise(res => map.once(evt, res));
-
-  // Put dates into the red “missing” badges now
-  const dl = document.getElementById('dateLeft');
-  const dr = document.getElementById('dateRight');
-  if (dl) dl.textContent = formatDate(d1);
-  if (dr) dr.textContent = formatDate(d2);
-
-  // -------- Menus --------
+  // Menus (index switch)
   const menuL = document.getElementById("menuL");
-  ["rgb","ndvi","irp"].forEach(o => {
+  ["rgb", "ndvi", "irp"].forEach((o) => {
     const a = document.createElement("a");
     a.id = `idx_${o}`;
     a.textContent = o.toUpperCase();
@@ -241,6 +167,7 @@
     menuL.appendChild(a);
   });
 
+  // Right menu label
   const menuR = document.getElementById("menuR");
   const b = document.createElement("a");
   b.textContent = "S2DR3";
@@ -248,40 +175,84 @@
   b.href = "#";
   menuR.appendChild(b);
 
-  // -------- Init (ordered) --------
+  // Attribution: add "© Gamma Earth"
+  function addGammaAttribution() {
+    const inners = document.querySelectorAll(".mapboxgl-ctrl-attrib-inner");
+    inners.forEach((el) => {
+      if (el.querySelector(".gamma-earth")) return; // avoid dupes
+      const sep = document.createTextNode(" | ");
+      const a = document.createElement("a");
+      a.href = "https://gamma.earth";
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.className = "gamma-earth";
+      a.textContent = "© Gamma Earth";
+      el.append(sep, a);
+    });
+  }
+
+  // Minimal “missing tile” probe — show red notes if a side is missing
+  function lonLatToTile(lon, lat, z) {
+    const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+    const y = Math.floor(
+      ((1 -
+        Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) /
+          Math.PI) /
+        2) *
+        Math.pow(2, z)
+    );
+    return { x, y };
+  }
+  function probeOne(date, idx, side) {
+    const tmpl = tilesFor(date, idx)[0];
+    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
+    const { x, y } = lonLatToTile(lon, lat, zCheck);
+    const url =
+      tmpl.replace("{z}", zCheck).replace("{x}", x).replace("{y}", y) +
+      (tmpl.includes("?") ? "&" : "?") +
+      "_cb=" +
+      Date.now();
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {};
+    img.onerror = () => {
+      const noteId = side === "left" ? "noteLeft" : "noteRight";
+      const el = document.getElementById(noteId);
+      if (el) el.style.display = "block";
+    };
+    img.src = url;
+  }
+
+  // ---- Initialize in the correct order
   (async function init() {
-    // 1) wait for both base styles to load
-    await Promise.all([ once(beforeMap, 'load'), once(afterMap, 'load') ]);
+    // 1) wait until BOTH styles are fully loaded
+    await Promise.all([once(beforeMap, "load"), once(afterMap, "load")]);
 
-    // 2) add raster overlays (left/right)
-    addOverlay(beforeMap, d1, index, 'before');
-    addOverlay(afterMap,  d2, index, 'after');
+    // 2) add our S2DR3 overlays (per chosen index) to each map
+    addOverlay(beforeMap, d1, index, "before");
+    addOverlay(afterMap, d2, index, "after");
 
-    // 3) build the compare slider AFTER overlays exist
-    new mapboxgl.Compare(beforeMap, afterMap, '#comparison-container', {});
+    // 3) create the vertical slider AFTER overlays exist
+    const compare = new mapboxgl.Compare(beforeMap, afterMap, "#comparison-container", {});
 
-    // 4) attribution + missing-date probes
+    // 4) attribution + (optional) missing-date notes
     addGammaAttribution();
-    probeOne(d1, index, 'left');
-    probeOne(d2, index, 'right');
+    probeOne(d1, index, "left");
+    probeOne(d2, index, "right");
 
-    // 5) nudge a repaint just in case
+    // Optional: nudge a repaint
     beforeMap.resize();
     afterMap.resize();
-  })();
 
-  // -------- Optional debug --------
-  function showDebug() {
-    const dbg = document.getElementById("debug");
-    if (!dbg) return;
+    // Optional: log a sample tile for quick debugging
     const sample = tilesFor(d1, index)[0]
-      .replace("{z}","12").replace("{x}","2048").replace("{y}","1363");
-    dbg.style.display = "block";
-    dbg.textContent = `Sample tile: ${sample}`;
-  }
-  // Enable for troubleshooting:
-  beforeMap.on("load", showDebug);
+      .replace("{z}", "12")
+      .replace("{x}", "2048")
+      .replace("{y}", "1363");
+    console.log("Sample Gamma tile:", sample);
+  })();
 </script>
+
 
 </body>
 </html>
