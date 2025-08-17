@@ -91,11 +91,48 @@
     return "_TCI";
   }
 
-  // -------- Tiles --------
-  const token = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800"; // demo token
-  const base  = "https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png";
-  const tail  = ".tif&render=rgb&disable_cache=true";
-  const vtag  = `_v=${encodeURIComponent([d1,d2,index].join("-"))}`; // light cache-buster per combo
+  // -------- DF Tiles --------
+  // const token = "c3b3ffa9-a0fd-4a01-abdd-168b675e8800"; // demo token
+  // const base  = "https://rasters.digifarm.io/v1/rasters/file/{z}/{x}/{y}.png";
+  // const tail  = ".tif&render=rgb&disable_cache=true";
+  // const vtag  = `_v=${encodeURIComponent([d1,d2,index].join("-"))}`; // light cache-buster per combo
+
+  // --- Gamma Earth API tiles (rio-tiler lambda) ---
+  const GE_ROOT = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
+  
+  // optional: light cache-bust per combo (helps when switching index/dates)
+  const vtag = `_v=${encodeURIComponent([d1, d2, index].join("-"))}`;
+  
+  // Build a single tile template URL (Mapbox-style {z}/{x}/{y})
+  function tilesFor(date, idx) {
+    const P = pid(date); // e.g. T38KMC-e0a95e3ea-20230816
+    const prefix = `s3://sentinel-s2dr3/${country}/${tile}/${P}/S2L2Ax10_${P}`;
+  
+    let cogKey, extra = "";
+  
+    if (idx === "rgb") {
+      // True color (3-band)
+      cogKey = `${prefix}_TCI.tif`;
+      extra  = "&bidx=1&bidx=2&bidx=3";
+    } else if (idx === "ndvi") {
+      // Single-band NDVI (apply stretch + colormap)
+      cogKey = `${prefix}_NDVI.tif`;
+      // adjust rescale if your NDVI is 0..1 rather than -1..1
+      extra  = "&rescale=-1,1&colormap_name=RdYlGn";
+    } else if (idx === "irp" || idx === "fcir") {
+      // IRP/FCIR false color (3-band: B11,B8,B5) — adjust bidx if your band order differs
+      cogKey = `${prefix}_IRP.tif`;
+      extra  = "&bidx=1&bidx=2&bidx=3";
+    } else {
+      // default to RGB
+      cogKey = `${prefix}_TCI.tif`;
+      extra  = "&bidx=1&bidx=2&bidx=3";
+    }
+  
+    // If your gateway expects unencoded s3:// you can drop encodeURIComponent
+    const url = `${GE_ROOT}/{z}/{x}/{y}@2x?url=${encodeURIComponent(cogKey)}${extra}&${vtag}`;
+    return [url];
+  }
 
   function tilesFor(date, idx) {
     const P = pid(date);
