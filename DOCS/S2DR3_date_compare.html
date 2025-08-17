@@ -83,7 +83,7 @@
   const [zoomStr, latStr, lonStr] = hash.split("/");
   const zoom = Number(zoomStr), lat = Number(latStr), lon = Number(lonStr);
 
-  // -------- Gamma Earth COG tiler (this replaces Digifarm) --------
+  // -------- Gamma Earth COG tiler --------
   function productSuffix(idx) {
     if (idx === "rgb") return "_TCI.tif";
     if (idx === "ndvi") return "_NDVI.tif";
@@ -98,7 +98,7 @@
   // Return a single-item array with the tile template, as Mapbox expects
   function tilesFor(date, idx) {
     const P = pid(date);
-    // IMPORTANT: this mirrors your working page: the s3:// URL is NOT encoded
+    // IMPORTANT: s3:// URL is not URL-encoded to mirror your working page
     const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
     const suffix = productSuffix(idx);
     return [`${root}/S2L2Ax10_${P}${suffix}`];
@@ -134,7 +134,6 @@
     const srcId = `s2dr3_${side}`;
     const lyrId = `s2dr3_${side}_layer`;
 
-    // If you see blank tiles, try tileSize: 256
     map.addSource(srcId, { type: "raster", tiles: tilesFor(date, idx), tileSize: 512 });
     map.addLayer({
       id: lyrId,
@@ -192,51 +191,94 @@
     });
   }
 
-  // Minimal “missing tile” probe — show red notes if a side is missing
+  // -------- Missing-date helpers (new/updated) --------
+  // Fill the note labels immediately so you never get "No preview for " (empty)
+  function setNoteLabels(){
+    const dl = document.getElementById('dateLeft');
+    const dr = document.getElementById('dateRight');
+    if (dl) dl.textContent = formatDate(d1);
+    if (dr) dr.textContent = formatDate(d2);
+  }
+
+  // Show the red note and set its date explicitly
+  function showMissing(side, date){
+    const id  = side === 'left' ? 'noteLeft' : 'noteRight';
+    const el  = document.getElementById(id);
+    if (!el) return;
+    const sp  = el.querySelector('span');
+    if (sp) sp.textContent = formatDate(date);
+    el.style.display = 'block';
+  }
+
+  // lon/lat -> tile coords
   function lonLatToTile(lon, lat, z) {
     const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
     const y = Math.floor(
-      ((1 -
-        Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) /
-          Math.PI) /
-        2) *
-        Math.pow(2, z)
+      ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
+      Math.pow(2, z)
     );
     return { x, y };
   }
+
+  // Probe a single tile: declare missing on error, timeout, or fully-blank tile
   function probeOne(date, idx, side) {
-    const tmpl = tilesFor(date, idx)[0];
+    const tmpl   = tilesFor(date, idx)[0];
     const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
     const { x, y } = lonLatToTile(lon, lat, zCheck);
     const url =
       tmpl.replace("{z}", zCheck).replace("{x}", x).replace("{y}", y) +
-      (tmpl.includes("?") ? "&" : "?") +
-      "_cb=" +
-      Date.now();
+      (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
+
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.onload = () => {};
-    img.onerror = () => {
-      const noteId = side === "left" ? "noteLeft" : "noteRight";
-      const el = document.getElementById(noteId);
-      if (el) el.style.display = "block";
+
+    let done = false;
+    const finish = (missing) => { if (done) return; done = true; if (missing) showMissing(side, date); };
+
+    const timer = setTimeout(() => finish(true), 4500); // 4.5s timeout => treat as missing
+
+    img.onerror = () => { clearTimeout(timer); finish(true); };
+    img.onload  = () => {
+      clearTimeout(timer);
+      // Check for blank/transparent tile (if CORS allows)
+      try {
+        const c = document.createElement('canvas');
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+        // sample a few points quickly
+        const w = c.width, h = c.height;
+        const samples = [[1,1],[w>>1,h>>1],[w-2,h-2]];
+        let anyAlpha = false;
+        for (const [sx,sy] of samples){
+          const px = g.getImageData(Math.max(0,sx), Math.max(0,sy), 1, 1).data;
+          if (px[3] !== 0) { anyAlpha = true; break; }
+        }
+        finish(!anyAlpha);
+      } catch(e){
+        // Tainted canvas/etc — assume not missing to avoid false positives
+        finish(false);
+      }
     };
     img.src = url;
   }
 
   // ---- Initialize in the correct order
   (async function init() {
+    // set the labels right away
+    setNoteLabels();
+
     // 1) wait until BOTH styles are fully loaded
     await Promise.all([once(beforeMap, "load"), once(afterMap, "load")]);
 
     // 2) add our S2DR3 overlays (per chosen index) to each map
     addOverlay(beforeMap, d1, index, "before");
-    addOverlay(afterMap, d2, index, "after");
+    addOverlay(afterMap,  d2, index, "after");
 
     // 3) create the vertical slider AFTER overlays exist
     const compare = new mapboxgl.Compare(beforeMap, afterMap, "#comparison-container", {});
 
-    // 4) attribution + (optional) missing-date notes
+    // 4) attribution + missing-date probes
     addGammaAttribution();
     probeOne(d1, index, "left");
     probeOne(d2, index, "right");
@@ -245,14 +287,13 @@
     beforeMap.resize();
     afterMap.resize();
 
-    // Optional: log a sample tile for quick debugging
+    // Optional: log a sample tile
     const sample = tilesFor(d1, index)[0]
-      .replace("{z}", "12")
-      .replace("{x}", "2048")
-      .replace("{y}", "1363");
+      .replace("{z}", "12").replace("{x}", "2048").replace("{y}", "1363");
     console.log("Sample Gamma tile:", sample);
   })();
 </script>
+
 
 
 </body>
