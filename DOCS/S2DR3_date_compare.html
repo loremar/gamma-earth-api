@@ -191,15 +191,15 @@
     });
   }
 
-  // -------- Missing-date helpers (new/updated) --------
-  // Fill the note labels immediately so you never get "No preview for " (empty)
+  // -------- Missing-date helpers (safer) --------
+  // Fill the note labels immediately so you never get "No preview for "
   function setNoteLabels(){
     const dl = document.getElementById('dateLeft');
     const dr = document.getElementById('dateRight');
     if (dl) dl.textContent = formatDate(d1);
     if (dr) dr.textContent = formatDate(d2);
   }
-
+  
   // Show the red note and set its date explicitly
   function showMissing(side, date){
     const id  = side === 'left' ? 'noteLeft' : 'noteRight';
@@ -209,7 +209,7 @@
     if (sp) sp.textContent = formatDate(date);
     el.style.display = 'block';
   }
-
+  
   // lon/lat -> tile coords
   function lonLatToTile(lon, lat, z) {
     const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
@@ -219,49 +219,43 @@
     );
     return { x, y };
   }
-
-  // Probe a single tile: declare missing on error, timeout, or fully-blank tile
+  
+  // Probe multiple zooms; only show "missing" if all of them fail
   function probeOne(date, idx, side) {
-    const tmpl   = tilesFor(date, idx)[0];
-    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
-    const { x, y } = lonLatToTile(lon, lat, zCheck);
-    const url =
-      tmpl.replace("{z}", zCheck).replace("{x}", x).replace("{y}", y) +
-      (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
-
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-
-    let done = false;
-    const finish = (missing) => { if (done) return; done = true; if (missing) showMissing(side, date); };
-
-    const timer = setTimeout(() => finish(true), 4500); // 4.5s timeout => treat as missing
-
-    img.onerror = () => { clearTimeout(timer); finish(true); };
-    img.onload  = () => {
-      clearTimeout(timer);
-      // Check for blank/transparent tile (if CORS allows)
-      try {
-        const c = document.createElement('canvas');
-        c.width = img.naturalWidth; c.height = img.naturalHeight;
-        const g = c.getContext('2d');
-        g.drawImage(img, 0, 0);
-        // sample a few points quickly
-        const w = c.width, h = c.height;
-        const samples = [[1,1],[w>>1,h>>1],[w-2,h-2]];
-        let anyAlpha = false;
-        for (const [sx,sy] of samples){
-          const px = g.getImageData(Math.max(0,sx), Math.max(0,sy), 1, 1).data;
-          if (px[3] !== 0) { anyAlpha = true; break; }
+    const tmpl = tilesFor(date, idx)[0];
+  
+    // Try the current zoom (rounded) plus two safe fallbacks
+    const z0 = Math.max(0, Math.round(zoom));
+    const zList = Array.from(new Set([z0, 12, 10])); // dedupe
+  
+    let failures = 0;
+    const total = zList.length;
+    let anySuccess = false;
+  
+    zList.forEach(zc => {
+      const { x, y } = lonLatToTile(lon, lat, zc);
+      const url = tmpl
+        .replace('{z}', zc)
+        .replace('{x}', x)
+        .replace('{y}', y)
+        + (tmpl.includes('?') ? '&' : '?') + '_cb=' + Date.now(); // cache-bust
+  
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+  
+      img.onload = () => { anySuccess = true; };
+      img.onerror = () => {
+        failures += 1;
+        if (failures === total && !anySuccess) {
+          showMissing(side, date);
         }
-        finish(!anyAlpha);
-      } catch(e){
-        // Tainted canvas/etc — assume not missing to avoid false positives
-        finish(false);
-      }
-    };
-    img.src = url;
+      };
+  
+      // If the last probe loads first, we still won’t show missing
+      img.src = url;
+    });
   }
+
 
   // ---- Initialize in the correct order
   (async function init() {
