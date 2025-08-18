@@ -43,7 +43,13 @@
           <span>Allow zoom fallback (12, 10)</span>
         </div>
       </div>
-
+      <div>
+        <label for="lockCenter">Lock to tile center</label>
+        <div style="display:flex;gap:.5rem;align-items:center">
+          <input id="lockCenter" type="checkbox" checked>
+          <span>After success, set lon/lat to the tile’s center</span>
+        </div>
+      </div>
       <div style="grid-column: span 3;">
         <label for="ds">Output ID (ds)</label>
         <input id="ds" type="text" placeholder="MG-T38KMC-e0a95e3ea" value="MG-T38KMC-e0a95e3ea">
@@ -100,10 +106,13 @@
       const suffix = productSuffix(idx);
       return [`${root}/S2L2Ax10_${P}${suffix}`];
     }
-    function lonLatToTile(lon, lat, z){
-      const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-      const y = Math.floor(((1 - Math.log(Math.tan((lat * Math.PI)/180) + 1/Math.cos((lat * Math.PI)/180)) / Math.PI) / 2) * Math.pow(2, z));
-      return { x, y };
+    // Convert XYZ tile indices back to the tile-center lon/lat
+    function tileCenterLonLat(z, x, y){
+      const n = Math.pow(2, z);
+      const lon = (x + 0.5) / n * 360 - 180;
+      const t = Math.PI - 2 * Math.PI * (y + 0.5) / n;
+      const lat = (180 / Math.PI) * Math.atan(Math.sinh(t)); // inverse WebMercator
+      return { lon, lat };
     }
     function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
 
@@ -156,6 +165,7 @@
       const idx  = (typeUi === "RGB") ? "rgb" : (typeUi === "IRP") ? "irp" : "ndvi";
       const date = (document.getElementById("date").value || "").trim();
       const allowFallback = document.getElementById("fallback").checked;
+      const lockCenter = document.getElementById("lockCenter").checked; // NEW
   
       if (!ds)   { alert("Missing output_id (ds)"); return; }
       if (!/^\d{8}$/.test(date)) { alert("Date must be YYYYMMDD"); return; }
@@ -169,7 +179,18 @@
         return;
       }
   
-      setMsg(`Found tiles for ${nice(date)} — z${res.z}. Added thumbnail below.`);
+      // NEW: lock inputs to the tile center (for the actual z/x/y that succeeded)
+      if (lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
+        const c = tileCenterLonLat(res.z, res.x, res.y);
+        document.getElementById("lon").value = c.lon.toFixed(6);
+        document.getElementById("lat").value = c.lat.toFixed(6);
+        document.getElementById("zoom").value = String(res.z);
+        setMsg(`Found tiles for ${nice(date)} — z${res.z}. Locked lon/lat to tile center.`);
+      } else {
+        setMsg(`Found tiles for ${nice(date)} — z${res.z}.`);
+      }
+  
+      // Thumbnail
       const wrap = document.createElement("div"); wrap.className = "thumb";
       const img = document.createElement("img"); img.src = res.url;
       const cap = document.createElement("div"); cap.className = "cap";
