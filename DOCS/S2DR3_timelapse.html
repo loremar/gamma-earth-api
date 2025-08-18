@@ -12,10 +12,11 @@
     body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;background:#0b0f14;color:var(--txt)}
     header{padding:16px;border-bottom:1px solid var(--border)}
     h1{margin:0;font-size:18px}
-    .wrap{max-width:1100px;margin:0 auto;padding:16px;display:grid;grid-template-columns:420px 1fr;gap:16px}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px}
-    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
-    input,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0b121a;color:var(--txt)}
+    /* Readability & layout hotfix */
+    input, select { background:#0f1722; color:#eaf2fb; border:1px solid #3a556f; font-size:14px; }
+    label { color:#b7c8d6; font-weight:600; }
+    .wrap { grid-template-columns: 560px 1fr; }  /* wider form column */
+    .card { padding:18px; }
     .row{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
     .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#101826;color:var(--txt);cursor:pointer}
     .btn.primary{background:linear-gradient(180deg,#0eb2ff,#0092d3);border-color:#0aa6ef;color:#00131d;font-weight:600}
@@ -92,7 +93,7 @@
           </select>
         </div>
         <div style="display:flex;align-items:end">
-          <button class="btn" id="add">➕ Add date</button>
+          <button class="btn" id="add" type="button">➕ Add date</button>
         </div>
       </div>
 
@@ -371,6 +372,7 @@
     // UI hooks
     document.getElementById("add").addEventListener("click", async (e)=>{
       e.preventDefault();
+      alert("Add handler started"); // TEMP: proves the listener is wired
       try {
         const lon = state.lon = parseFloat(document.getElementById("lon").value);
         const lat = state.lat = parseFloat(document.getElementById("lat").value);
