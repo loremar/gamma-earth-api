@@ -143,6 +143,9 @@
     const count  = document.getElementById("count");
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
+    
+    // DEBUG 
+    const DEBUG = true; // set to false to silence logs
 
     function setMsg(t, cls="muted"){ msg.className = cls; msg.textContent = t; }
     function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
@@ -192,16 +195,31 @@
       const tmpl = tilesFor(country, tile, uid, date, idx)[0];
       const z0 = Math.max(0, Math.round(zoom));
       const zList = Array.from(new Set([z0, 12, 10]));
+    
       return new Promise((resolve) => {
-        let fails=0, total=zList.length, ok=false;
-        zList.forEach(zc=>{
-          const {x,y} = lonLatToTile(lon,lat,zc);
-          const url = tmpl.replace("{z}",zc).replace("{x}",x).replace("{y}",y)
-            + (tmpl.includes("?")?"&":"?")+"_cb="+Date.now();
+        let fails = 0, total = zList.length, ok = false;
+    
+        zList.forEach(zc => {
+          const {x, y} = lonLatToTile(lon, lat, zc);
+          const url = tmpl.replace("{z}", zc).replace("{x}", x).replace("{y}", y)
+            + (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
+    
+          if (DEBUG) console.log(`[probeDate] ${date} ${idx.toUpperCase()} z=${zc} x=${x} y=${y}`, url);
+    
           const img = new Image();
           img.crossOrigin = "anonymous";
-          img.onload = ()=>{ ok=true; resolve(true); };
-          img.onerror = ()=>{ fails++; if(fails===total && !ok) resolve(false); };
+    
+          img.onload = () => {
+            if (DEBUG) console.log(`[probeDate] ✅ loaded: ${url}`);
+            ok = true;
+            resolve(true);
+          };
+          img.onerror = () => {
+            if (DEBUG) console.warn(`[probeDate] ❌ failed: ${url}`);
+            fails++;
+            if (fails === total && !ok) resolve(false);
+          };
+    
           img.src = url;
         });
       });
