@@ -1,1 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>S2DR3 Timelapse (Gamma Earth Tiles → MP4)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.js"></script>
+  <link href="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.css" rel="stylesheet"/>
+  <style>
+    :root { --bg:#0b0f14; --card:#0f141b; --border:#223247; --muted:#9db1c3; --txt:#e6eef6; }
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;background:#0b0f14;color:var(--txt)}
+    header{padding:16px;border-bottom:1px solid var(--border)}
+    h1{margin:0;font-size:18px}
+    .wrap{max-width:1100px;margin:0 auto;padding:16px;display:grid;grid-template-columns:420px 1fr;gap:16px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px}
+    label{font-size:12px;color:var(--muted);display:block;margin-bottom:6px}
+    input,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:#0b121a;color:var(--txt)}
+    .row{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+    .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 14px;border-radius:10px;border:1px solid var(--border);background:#101826;color:var(--txt);cursor:pointer}
+    .btn.primary{background:linear-gradient(180deg,#0eb2ff,#0092d3);border-color:#0aa6ef;color:#00131d;font-weight:600}
+    .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+    .thumb{position:relative;border:1px solid var(--border);border-radius:12px;overflow:hidden}
+    .thumb img{display:block;width:100%;height:150px;object-fit:cover}
+    .cap{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(180deg,transparent,rgba(0,0,0,.75));padding:6px 8px;font-size:12px;display:flex;justify-content:space-between}
+    .x{position:absolute;top:6px;right:6px;width:26px;height:26px;border-radius:8px;border:1px solid var(--border);background:#0b121a;color:#bcd;cursor:pointer}
+    .muted{color:var(--muted);font-size:13px}
+    .bar{height:8px;background:#0b121a;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+    .bar>div{height:100%;width:0%;background:linear-gradient(90deg,#0eb2ff,#67e8a3);transition:width .2s}
+    .warn{color:#ffd27f}.err{color:#ff6b6b}.ok{color:#67e8a3}
+    .pill{border:1px solid var(--border);padding:4px 8px;border-radius:999px;font-size:12px}
+    /* Offscreen map & canvas */
+    #map{position:absolute;left:-99999px;top:-99999px;width:1080px;height:1080px}
+    canvas{display:none}
+  </style>
+</head>
+<body>
+  <header><h1>S2DR3 Timelapse — Gamma Earth API (no backend)</h1></header>
+  <div class="wrap">
+    <!-- Controls -->
+    <div class="card">
+      <div class="row">
+        <div style="grid-column:span 3">
+          <label>Longitude</label>
+          <input id="lon" type="number" step="0.0001" placeholder="45.023"/>
+        </div>
+        <div style="grid-column:span 3">
+          <label>Latitude</label>
+          <input id="lat" type="number" step="0.0001" placeholder="-20.5228"/>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div style="grid-column:span 2">
+          <label>Zoom</label>
+          <input id="zoom" type="number" min="1" max="19" value="15"/>
+        </div>
+        <div style="grid-column:span 4">
+          <label>Output ID <span style="font-size:11px;color:var(--muted)">(ds)</span></label>
+          <input id="ds" type="text" placeholder="MG-T38KMC-e0a95e3ea"/>
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label>Type</label>
+          <select id="type">
+            <option>RGB</option>
+            <option>IRP</option>
+            <option>NDVI</option>
+          </select>
+        </div>
+        <div>
+          <label>Date (YYYYMMDD)</label>
+          <input id="date" type="text" maxlength="8" placeholder="20230816"/>
+        </div>
+        <div>
+          <label>Aspect</label>
+          <select id="aspect">
+            <option value="square">Square 1080×1080</option>
+            <option value="landscape">Landscape 1920×1080</option>
+            <option value="vertical">Vertical 1080×1920</option>
+          </select>
+        </div>
+        <div>
+          <label>FPS</label>
+          <input id="fps" type="number" min="1" max="60" value="24"/>
+        </div>
+        <div>
+          <label>Overlay</label>
+          <select id="overlay">
+            <option value="date">Date + S2DR3 10×</option>
+            <option value="none">None</option>
+          </select>
+        </div>
+        <div style="display:flex;align-items:end">
+          <button class="btn" id="add">➕ Add date</button>
+        </div>
+      </div>
+
+      <div class="muted" style="margin-top:10px">
+        Uses the same COG tiles as <span class="pill">S2DR3_date_compare.html</span>. We probe a tile for the date before adding.
+      </div>
+
+      <div style="margin-top:12px;display:grid;gap:10px">
+        <div class="bar"><div id="pbar"></div></div>
+        <div id="msg" class="muted"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn primary" id="gen">🎬 Generate timelapse</button>
+          <button class="btn" id="clear">🗑️ Clear</button>
+          <a id="dl-mp4" class="btn" download="timelapse.mp4" style="display:none">⬇️ MP4</a>
+          <a id="dl-webm" class="btn" download="timelapse.webm" style="display:none">⬇️ WebM</a>
+          <a id="dl-cover" class="btn" download="cover.png" style="display:none">⬇️ Cover (PNG)</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Thumbs -->
+    <div class="card">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px">
+        <span class="pill">Frames: <b id="count">0</b></span>
+        <span class="pill">Sorted by date</span>
+        <span class="pill">Duplicates ignored</span>
+      </div>
+      <div id="thumbs" class="thumbs"></div>
+    </div>
+  </div>
+
+  <!-- Hidden map used to render each frame -->
+  <div id="map"></div>
+  <!-- Offscreen export canvas (for aspect/overlays) -->
+  <canvas id="canvas" width="1080" height="1080"></canvas>
+
+  <!-- ffmpeg.wasm -->
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/util.min.js"></script>
+
+  <script>
+    // ===== Config & helpers =====
+    const MAX_FRAMES = 60;
+    const PAD = "#0a0f14";
+    const pbar = document.getElementById("pbar");
+    const msg  = document.getElementById("msg");
+    const thumbs = document.getElementById("thumbs");
+    const count  = document.getElementById("count");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+
+    function setMsg(t, cls="muted"){ msg.className = cls; msg.textContent = t; }
+    function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
+    function validDate(s){ return /^\d{8}$/.test(s); }
+
+    // ===== Map setup (same token & style) =====
+    mapboxgl.accessToken = "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag";
+    const map = new mapboxgl.Map({
+      container: "map",
+      style: "mapbox://styles/mapbox/satellite-streets-v12",
+      center: [45.023, -20.5228],
+      zoom: 15,
+      maxZoom: 18,
+      preserveDrawingBuffer: true  // important: allows canvas export
+    });
+
+    // Gamma Earth tiles (copied from your compare page)
+    const lambdaBase = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
+    function productSuffix(idx){
+      if(idx==="rgb") return "_TCI.tif";
+      if(idx==="ndvi") return "_NDVI.tif";
+      if(idx==="irp"||idx==="fcir") return "_IRP.tif";
+      return "_TCI.tif";
+    }
+    function pid(tile, uid, date){ return `${tile}-${uid}-${date}`; }
+    function tilesFor(country, tile, uid, date, idx){
+      const P = pid(tile, uid, date);
+      const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
+      const suffix = productSuffix(idx);
+      return [`${root}/S2L2Ax10_${P}${suffix}`];
+    }
+
+    // Parse ds into country, tile, uid
+    function parseDs(ds){
+      const parts = (ds||"").split("-");
+      return { country: parts[0], tile: parts[1], uid: parts[2] };
+    }
+
+    // Probe existence: try a few zooms at current lon/lat (like your probeOne)
+    function lonLatToTile(lon, lat, z){
+      const x = Math.floor(((lon+180)/360)*Math.pow(2,z));
+      const y = Math.floor(((1-Math.log(Math.tan((lat*Math.PI)/180)+1/Math.cos((lat*Math.PI)/180))/Math.PI)/2)*Math.pow(2,z));
+      return {x,y};
+    }
+    function probeDate(ds, idx, date, lon, lat, zoom){
+      const {country, tile, uid} = parseDs(ds);
+      const tmpl = tilesFor(country, tile, uid, date, idx)[0];
+      const z0 = Math.max(0, Math.round(zoom));
+      const zList = Array.from(new Set([z0, 12, 10]));
+      return new Promise((resolve) => {
+        let fails=0, total=zList.length, ok=false;
+        zList.forEach(zc=>{
+          const {x,y} = lonLatToTile(lon,lat,zc);
+          const url = tmpl.replace("{z}",zc).replace("{x}",x).replace("{y}",y)
+            + (tmpl.includes("?")?"&":"?")+"_cb="+Date.now();
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = ()=>{ ok=true; resolve(true); };
+          img.onerror = ()=>{ fails++; if(fails===total && !ok) resolve(false); };
+          img.src = url;
+        });
+      });
+    }
+
+    // Manage frames
+    const state = {
+      lon: 45.023,
+      lat: -20.5228,
+      zoom: 15,
+      ds: "MG-T38KMC-e0a95e3ea",
+      idx: "rgb",   // rgb | irp | ndvi
+      frames: /** @type {{date:string}[]} */([]),
+      aspect: "square",
+      fps: 24,
+      overlay: "date",
+    };
+    function refreshThumbs(){
+      state.frames.sort((a,b)=>a.date.localeCompare(b.date));
+      count.textContent = String(state.frames.length);
+      thumbs.innerHTML = "";
+      state.frames.forEach((f,i)=>{
+        const div = document.createElement("div"); div.className="thumb";
+        const img = document.createElement("img");
+        // Build a real tile URL for a representative thumbnail (z=12)
+        const {country,tile,uid} = parseDs(state.ds);
+        const t = tilesFor(country, tile, uid, f.date, state.idx)[0]
+          .replace("{z}","12").replace("{x}","2048").replace("{y}","1363");
+        img.src = t;
+        const cap = document.createElement("div"); cap.className="cap";
+        cap.innerHTML = `<span>${nice(f.date)}</span><span>${state.idx.toUpperCase()}</span>`;
+        const x = document.createElement("button"); x.className="x"; x.textContent="✕";
+        x.onclick = ()=>{ state.frames.splice(i,1); refreshThumbs(); };
+        div.append(img, cap, x); thumbs.append(div);
+      });
+    }
+
+    // Aspect & overlay
+    function setAspect(a){
+      let w=1080,h=1080;
+      if(a==="landscape"){w=1920;h=1080;}
+      if(a==="vertical"){w=1080;h=1920;}
+      canvas.width=w; canvas.height=h;
+      // also resize hidden map to match render size for crisper frames
+      document.getElementById("map").style.width = w+"px";
+      document.getElementById("map").style.height= h+"px";
+      map.resize();
+    }
+    function drawOverlay(dateText){
+      if(state.overlay!=="date") return;
+      const cw=canvas.width,ch=canvas.height;
+      const pad=Math.round(Math.min(cw,ch)*0.02);
+      const fs = Math.round(Math.min(cw,ch)*0.035);
+      // gradient band at bottom
+      const grad = ctx.createLinearGradient(0,ch-fs*2-pad*2,0,ch);
+      grad.addColorStop(0,"rgba(0,0,0,0)"); grad.addColorStop(1,"rgba(0,0,0,.55)");
+      ctx.fillStyle=grad; ctx.fillRect(0,ch-fs*2-pad*2,cw,fs*2+pad*2);
+      // text
+      ctx.fillStyle="#fff"; ctx.globalAlpha=0.95;
+      ctx.font=`600 ${fs}px system-ui,Segoe UI,Roboto,Arial`;
+      ctx.fillText(dateText, pad, ch-pad);
+      const badge="S2DR3 10×"; const m=ctx.measureText(badge);
+      ctx.fillText(badge, cw-pad-m.width, ch-pad);
+      ctx.globalAlpha=1;
+    }
+
+    // Map source switching for each date, then export
+    const SRC_ID = "s2dr3_src";
+    const LYR_ID = "s2dr3_layer";
+    function ensureSource(country,tile,uid,date,idx){
+      const tiles = tilesFor(country,tile,uid,date,idx);
+      if(!map.getSource(SRC_ID)){
+        map.addSource(SRC_ID,{type:"raster", tiles, tileSize:512});
+        map.addLayer({id:LYR_ID, type:"raster", source:SRC_ID, paint:{"raster-resampling":"nearest"}});
+      } else {
+        const src = map.getSource(SRC_ID);
+        // @ts-ignore setTiles exists for raster sources in Mapbox GL JS
+        if(src.setTiles){ src.setTiles(tiles); }
+        else {
+          // fallback: remove+add if the runtime lacks setTiles
+          if(map.getLayer(LYR_ID)) map.removeLayer(LYR_ID);
+          map.removeSource(SRC_ID);
+          map.addSource(SRC_ID,{type:"raster", tiles, tileSize:512});
+          map.addLayer({id:LYR_ID, type:"raster", source:SRC_ID, paint:{"raster-resampling":"nearest"}});
+        }
+      }
+    }
+    function waitIdle(){ return new Promise(res=>map.once("idle", res)); }
+
+    function blitMapToCanvas(){
+      // Draw map’s WebGL canvas into our 2D canvas (with letterbox if aspect differs)
+      const mapCanvas = map.getCanvas();
+      const cw = canvas.width, ch=canvas.height;
+      const mw = mapCanvas.width, mh=mapCanvas.height;
+      ctx.fillStyle = PAD; ctx.fillRect(0,0,cw,ch);
+      // fit map canvas fully into export canvas (should match sizes already)
+      const scale = Math.min(cw/mw, ch/mh);
+      const dw = Math.round(mw*scale), dh=Math.round(mh*scale);
+      const dx = Math.floor((cw-dw)/2), dy=Math.floor((ch-dh)/2);
+      ctx.drawImage(mapCanvas, dx, dy, dw, dh);
+    }
+
+    // ffmpeg wiring
+    const { FFmpeg } = self.FFmpeg;
+    const { fetchFile } = self.FFmpegUtil;
+    let ffmpeg;
+    async function getFF(){ if(ffmpeg) return ffmpeg; ffmpeg = new FFmpeg(); await ffmpeg.load(); return ffmpeg; }
+    function dataURLtoBytes(url){
+      const b64 = url.split(",")[1]; const bin = atob(b64);
+      const u8 = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+      return u8;
+    }
+
+    async function encode(frames, fps, onP){
+      const ff = await getFF();
+      try{ ff.FS("readdir","/frames"); }catch{ ff.FS("mkdir","/frames"); }
+      try{ ff.FS("readdir","/out"); }catch{ ff.FS("mkdir","/out"); }
+      for(let i=0;i<frames.length;i++){
+        ff.FS("writeFile", `/frames/frame${String(i).padStart(3,"0")}.png`, frames[i]);
+        onP && onP(10 + Math.floor((i/frames.length)*50));
+      }
+      let mp4OK = true, mp4=null, webm=null;
+      try{
+        await ff.run(
+          "-framerate", String(fps),
+          "-i", "/frames/frame%03d.png",
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-movflags", "+faststart",
+          "/out/timelapse.mp4"
+        );
+        mp4 = ff.FS("readFile","/out/timelapse.mp4");
+      }catch(e){ mp4OK = false; }
+      onP && onP(90);
+      if(!mp4OK){
+        await ff.run(
+          "-framerate", String(fps),
+          "-i", "/frames/frame%03d.png",
+          "-c:v", "libvpx-vp9",
+          "-b:v", "2M",
+          "/out/timelapse.webm"
+        );
+        webm = ff.FS("readFile","/out/timelapse.webm");
+      }
+      onP && onP(100);
+      return { mp4, webm };
+    }
+
+    // UI hooks
+    document.getElementById("add").addEventListener("click", async (e)=>{
+      e.preventDefault();
+      const lon = state.lon = parseFloat(document.getElementById("lon").value);
+      const lat = state.lat = parseFloat(document.getElementById("lat").value);
+      const zoom = state.zoom = parseInt(document.getElementById("zoom").value,10);
+      state.ds = (document.getElementById("ds").value||"").trim();
+      const typeUi = document.getElementById("type").value;
+      state.idx = (typeUi==="RGB")?"rgb":(typeUi==="IRP")?"irp":"ndvi";
+      const date = (document.getElementById("date").value||"").trim();
+      state.aspect = document.getElementById("aspect").value;
+      state.fps = Math.max(1, Math.min(60, parseInt(document.getElementById("fps").value||"24",10)));
+      state.overlay = document.getElementById("overlay").value;
+
+      if(!state.ds) return setMsg("Please enter an output_id (ds).", "err");
+      if(!validDate(date)) return setMsg("Date must be YYYYMMDD.", "err");
+      if(state.frames.length>=MAX_FRAMES) return setMsg(`Max ${MAX_FRAMES} frames reached.`, "warn");
+      if(state.frames.some(f=>f.date===date)) return setMsg(`Date ${date} already added.`, "warn");
+
+      setMsg("Checking date…");
+      const ok = await probeDate(state.ds, state.idx, date, lon, lat, zoom);
+      if(!ok) return setMsg(`No tiles for ${state.idx.toUpperCase()} on ${nice(date)} here.`, "err");
+      state.frames.push({date});
+      setMsg(`Added ${date}.`, "ok");
+      refreshThumbs();
+    });
+
+    document.getElementById("clear").addEventListener("click", (e)=>{
+      e.preventDefault();
+      state.frames = []; refreshThumbs();
+      setMsg("Cleared.");
+      document.getElementById("dl-mp4").style.display="none";
+      document.getElementById("dl-webm").style.display="none";
+      document.getElementById("dl-cover").style.display="none";
+    });
+
+    document.getElementById("gen").addEventListener("click", async (e)=>{
+      e.preventDefault();
+      if(state.frames.length===0) return setMsg("Add at least one date.", "err");
+
+      // set view & aspect
+      map.jumpTo({ center:[state.lon, state.lat], zoom: state.zoom });
+      setAspect(state.aspect);
+
+      const {country, tile, uid} = parseDs(state.ds);
+
+      setMsg("Rendering frames…"); pbar.style.width="5%";
+      const pngs = [];
+      for(let i=0;i<state.frames.length;i++){
+        const d = state.frames[i].date;
+        ensureSource(country, tile, uid, d, state.idx);
+        await waitIdle(); // wait tiles draw
+        // draw map to our export canvas
+        blitMapToCanvas();
+        // overlay
+        if(state.overlay==="date") drawOverlay(nice(d));
+        // cover
+        if(i===0){
+          const coverUrl = canvas.toDataURL("image/png");
+          const a = document.getElementById("dl-cover");
+          a.href = coverUrl; a.style.display = "inline-flex";
+        }
+        pngs.push( dataURLtoBytes(canvas.toDataURL("image/png")) );
+        pbar.style.width = (5 + Math.floor(((i+1)/state.frames.length)*35))+"%"; // to 40%
+      }
+
+      setMsg("Encoding video in your browser…");
+      const { mp4, webm } = await encode(pngs, state.fps, (pct)=>{ pbar.style.width = pct+"%"; });
+
+      const mp4A = document.getElementById("dl-mp4");
+      const webmA= document.getElementById("dl-webm");
+      if(mp4 && mp4.length){
+        mp4A.href = URL.createObjectURL(new Blob([mp4.buffer], {type:"video/mp4"}));
+        mp4A.style.display="inline-flex"; webmA.style.display="none";
+        setMsg("Done! MP4 ready 🎉", "ok");
+      } else if(webm && webm.length){
+        webmA.href = URL.createObjectURL(new Blob([webm.buffer], {type:"video/webm"}));
+        webmA.style.display="inline-flex"; mp4A.style.display="none";
+        setMsg("MP4 not available here — WebM provided ✅", "warn");
+      } else {
+        setMsg("Encoding failed — try fewer frames or reload.", "err");
+      }
+    });
+
+    // defaults for convenience
+    window.addEventListener("DOMContentLoaded", async ()=>{
+      document.getElementById("lon").value = "45.023";
+      document.getElementById("lat").value = "-20.5228";
+      document.getElementById("zoom").value= "15";
+      document.getElementById("ds").value  = "MG-T38KMC-e0a95e3ea";
+      document.getElementById("type").value= "RGB";
+      document.getElementById("date").value= "20230816";
+      // center map so first probe works fast
+      map.once("load", ()=> map.jumpTo({center:[45.023,-20.5228], zoom:15}));
+    });
+  </script>
+</body>
+</html>
 
