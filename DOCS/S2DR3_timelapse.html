@@ -353,29 +353,33 @@
     // UI hooks
     document.getElementById("add").addEventListener("click", async (e)=>{
       e.preventDefault();
-      const lon = state.lon = parseFloat(document.getElementById("lon").value);
-      const lat = state.lat = parseFloat(document.getElementById("lat").value);
-      const zoom = state.zoom = parseInt(document.getElementById("zoom").value,10);
-      state.ds = (document.getElementById("ds").value||"").trim();
-      const typeUi = document.getElementById("type").value;
-      state.idx = (typeUi==="RGB")?"rgb":(typeUi==="IRP")?"irp":"ndvi";
-      const date = (document.getElementById("date").value||"").trim();
-      state.aspect = document.getElementById("aspect").value;
-      state.fps = Math.max(1, Math.min(60, parseInt(document.getElementById("fps").value||"24",10)));
-      state.overlay = document.getElementById("overlay").value;
-
-      if(!state.ds) return setMsg("Please enter an output_id (ds).", "err");
-      if(!validDate(date)) return setMsg("Date must be YYYYMMDD.", "err");
-      if(state.frames.length>=MAX_FRAMES) return setMsg(`Max ${MAX_FRAMES} frames reached.`, "warn");
-      if(state.frames.some(f=>f.date===date)) return setMsg(`Date ${date} already added.`, "warn");
-
-      setMsg("Checking date…");
-      const ok = await probeDate(state.ds, state.idx, date, lon, lat, zoom);
-      if(!ok) return setMsg(`No tiles for ${state.idx.toUpperCase()} on ${nice(date)} here.`, "err");
-      state.frames.push({date});
-      setMsg(`Added ${date}.`, "ok");
-      refreshThumbs();
+      try {
+        const lon = state.lon = parseFloat(document.getElementById("lon").value);
+        const lat = state.lat = parseFloat(document.getElementById("lat").value);
+        const zoom = state.zoom = parseInt(document.getElementById("zoom").value,10);
+        state.ds = (document.getElementById("ds").value||"").trim();
+        const typeUi = document.getElementById("type").value;
+        state.idx = (typeUi==="RGB")?"rgb":(typeUi==="IRP")?"irp":"ndvi";
+        const date = (document.getElementById("date").value||"").trim();
+    
+        if(!state.ds){ alert("Missing output_id (ds)"); return; }
+        if(!/^\d{8}$/.test(date)){ alert("Bad date format, must be YYYYMMDD"); return; }
+        if(state.frames.some(f=>f.date===date)){ alert("This date already added"); return; }
+    
+        setMsg("Checking date…");
+        const ok = await probeDate(state.ds, state.idx, date, lon, lat, zoom);
+        if(!ok){ alert(`No tiles for ${state.idx.toUpperCase()} on ${nice(date)}.`); return; }
+    
+        state.frames.push({date});
+        refreshThumbs();
+        setMsg(`Added ${date}`, "ok");
+        alert(`Date ${date} added successfully`);
+      } catch(err){
+        console.error(err);
+        alert("Error while adding date: "+err.message);
+      }
     });
+
 
     document.getElementById("clear").addEventListener("click", (e)=>{
       e.preventDefault();
