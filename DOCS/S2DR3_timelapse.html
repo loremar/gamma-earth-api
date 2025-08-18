@@ -106,6 +106,17 @@
       const suffix = productSuffix(idx);
       return [`${root}/S2L2Ax10_${P}${suffix}`];
     }
+
+    // lon/lat → XYZ tile indices at zoom z
+    function lonLatToTile(lon, lat, z) {
+      const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+      const y = Math.floor(
+        ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
+        Math.pow(2, z)
+      );
+      return { x, y };
+    }
+    
     // Convert XYZ tile indices back to the tile-center lon/lat
     function tileCenterLonLat(z, x, y){
       const n = Math.pow(2, z);
