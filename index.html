@@ -2,13 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Gamma Earth S2DR3 Two-Date Compare</title>
-  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
-  <script src="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.js"></script>
-  <link href="https://api.tiles.mapbox.com/mapbox-gl-js/v2.10.0/mapbox-gl.css" rel="stylesheet"/>
-  <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-compare/v0.4.0/mapbox-gl-compare.js"></script>
-  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-compare/v0.4.0/mapbox-gl-compare.css"/>
-
+  <title>Gamma Earth S2DR3 Tools</title>
   <style>
     body { margin:0; padding:0; background:#111; overflow:hidden; }
     .map { position:absolute; top:0; bottom:0; width:100%; }
@@ -43,215 +37,18 @@
   </style>
 </head>
 <body>
-  <nav id="menuL" class="menu"></nav>
-  <nav id="menuR" class="menu"></nav>
-  <div id="noteLeft"  class="missing-note" style="display:none">No preview for <span id="dateLeft"></span></div>
-  <div id="noteRight" class="missing-note" style="display:none">No preview for <span id="dateRight"></span></div>
-
-  <div id="comparison-container">
-    <div id="before" class="map"></div>
-    <div id="after" class="map"></div>
-  </div>
-
-  <div id="debug"></div>
-
-<script>
-  // -------- Params (robust) --------
-  const params = new URLSearchParams(location.search);
-
-  // Accept ds with or without a trailing -YYYYMMDD
-  const rawDs = params.get("ds") || "";
-  const parts = rawDs.split("-");
-  const [country, tile, uid] = [parts[0], parts[1], parts[2]];
-  const trailingDate = parts[3] && /^\d{8}$/.test(parts[3]) ? parts[3] : null;
-
-  let d1 = params.get("d1") || "";
-  let d2 = params.get("d2") || "";
-  if (!d1 && trailingDate) d1 = trailingDate;
-  if (!d2 && trailingDate) d2 = trailingDate;
-
-  const index = (params.get("index") || "rgb").toLowerCase();
-
-  if (!country || !tile || !uid || !d1 || !d2) {
-    document.body.innerHTML =
-      "<p style='color:#fff;padding:20px;font:16px sans-serif'>Missing or bad params. Use ?ds=COUNTRY-TILE-UID&d1=YYYYMMDD&d2=YYYYMMDD&index=rgb#15/lat/lon</p>";
-    throw new Error("Bad params");
-  }
-
-  const hash = (location.hash || "#15/-20.5228/45.023").replace("#","");
-  const [zoomStr, latStr, lonStr] = hash.split("/");
-  const zoom = Number(zoomStr), lat = Number(latStr), lon = Number(lonStr);
-
-  // -------- Gamma Earth COG tiler (this replaces Digifarm) --------
-  function productSuffix(idx) {
-    if (idx === "rgb") return "_TCI.tif";
-    if (idx === "ndvi") return "_NDVI.tif";
-    if (idx === "irp" || idx === "fcir") return "_IRP.tif";
-    return "_TCI.tif";
-  }
-  const lambdaBase =
-    "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
-
-  const pid = (date) => `${tile}-${uid}-${date}`;
-
-  // Return a single-item array with the tile template, as Mapbox expects
-  function tilesFor(date, idx) {
-    const P = pid(date);
-    // IMPORTANT: this mirrors your working page: the s3:// URL is NOT encoded
-    const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
-    const suffix = productSuffix(idx);
-    return [`${root}/S2L2Ax10_${P}${suffix}`];
-  }
-
-  // -------- Mapbox base --------
-  mapboxgl.accessToken =
-    "pk.eyJ1IjoiZ2lyaXNocGFsbGFnYXR0aSIsImEiOiJja2h6NGVuc20wYndjMnlxaDExbzlsa3B2In0.e94ZfcoPleAA2nqjeX10ag";
-
-  // Use Satellite basemap and overlay our rasters
-  const satelliteStyle = "mapbox://styles/mapbox/satellite-v9";
-
-  const beforeMap = new mapboxgl.Map({
-    container: "before",
-    style: satelliteStyle,
-    center: [lon, lat],
-    zoom,
-    maxZoom: 18
-  });
-  const afterMap = new mapboxgl.Map({
-    container: "after",
-    style: satelliteStyle,
-    center: [lon, lat],
-    zoom,
-    maxZoom: 18
-  });
-
-  // Helper: wait once for a Mapbox event
-  const once = (map, evt) => new Promise((res) => map.once(evt, res));
-
-  // Add our raster overlay (built from Gamma Earth) and a date badge
-  function addOverlay(map, date, idx, side) {
-    const srcId = `s2dr3_${side}`;
-    const lyrId = `s2dr3_${side}_layer`;
-
-    // If you see blank tiles, try tileSize: 256
-    map.addSource(srcId, { type: "raster", tiles: tilesFor(date, idx), tileSize: 512 });
-    map.addLayer({
-      id: lyrId,
-      type: "raster",
-      source: srcId,
-      minzoom: 0,
-      maxzoom: 19,
-      paint: { "raster-resampling": "nearest" }
-    });
-
-    // date badge
-    const badge = document.createElement("div");
-    badge.className = "date-badge";
-    badge.textContent = formatDate(date);
-    map.getContainer().appendChild(badge);
-  }
-
-  function formatDate(yyyymmdd) {
-    if (!/^\d{8}$/.test(yyyymmdd)) return yyyymmdd;
-    return `${yyyymmdd.slice(0, 4)}-${yyyymmdd.slice(4, 6)}-${yyyymmdd.slice(6, 8)}`;
-  }
-
-  // Menus (index switch)
-  const menuL = document.getElementById("menuL");
-  ["rgb", "ndvi", "irp"].forEach((o) => {
-    const a = document.createElement("a");
-    a.id = `idx_${o}`;
-    a.textContent = o.toUpperCase();
-    a.href = `?ds=${country}-${tile}-${uid}&d1=${d1}&d2=${d2}&index=${o}#${zoom}/${lat}/${lon}`;
-    if (o === index) a.className = "active";
-    menuL.appendChild(a);
-  });
-
-  // Right menu label
-  const menuR = document.getElementById("menuR");
-  const b = document.createElement("a");
-  b.textContent = "S2DR3";
-  b.className = "active";
-  b.href = "#";
-  menuR.appendChild(b);
-
-  // Attribution: add "© Gamma Earth"
-  function addGammaAttribution() {
-    const inners = document.querySelectorAll(".mapboxgl-ctrl-attrib-inner");
-    inners.forEach((el) => {
-      if (el.querySelector(".gamma-earth")) return; // avoid dupes
-      const sep = document.createTextNode(" | ");
-      const a = document.createElement("a");
-      a.href = "https://gamma.earth";
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.className = "gamma-earth";
-      a.textContent = "© Gamma Earth";
-      el.append(sep, a);
-    });
-  }
-
-  // Minimal “missing tile” probe — show red notes if a side is missing
-  function lonLatToTile(lon, lat, z) {
-    const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-    const y = Math.floor(
-      ((1 -
-        Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) /
-          Math.PI) /
-        2) *
-        Math.pow(2, z)
-    );
-    return { x, y };
-  }
-  function probeOne(date, idx, side) {
-    const tmpl = tilesFor(date, idx)[0];
-    const zCheck = Math.max(8, Math.min(12, Math.round(zoom)));
-    const { x, y } = lonLatToTile(lon, lat, zCheck);
-    const url =
-      tmpl.replace("{z}", zCheck).replace("{x}", x).replace("{y}", y) +
-      (tmpl.includes("?") ? "&" : "?") +
-      "_cb=" +
-      Date.now();
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {};
-    img.onerror = () => {
-      const noteId = side === "left" ? "noteLeft" : "noteRight";
-      const el = document.getElementById(noteId);
-      if (el) el.style.display = "block";
-    };
-    img.src = url;
-  }
-
-  // ---- Initialize in the correct order
-  (async function init() {
-    // 1) wait until BOTH styles are fully loaded
-    await Promise.all([once(beforeMap, "load"), once(afterMap, "load")]);
-
-    // 2) add our S2DR3 overlays (per chosen index) to each map
-    addOverlay(beforeMap, d1, index, "before");
-    addOverlay(afterMap, d2, index, "after");
-
-    // 3) create the vertical slider AFTER overlays exist
-    const compare = new mapboxgl.Compare(beforeMap, afterMap, "#comparison-container", {});
-
-    // 4) attribution + (optional) missing-date notes
-    addGammaAttribution();
-    probeOne(d1, index, "left");
-    probeOne(d2, index, "right");
-
-    // Optional: nudge a repaint
-    beforeMap.resize();
-    afterMap.resize();
-
-    // Optional: log a sample tile for quick debugging
-    const sample = tilesFor(d1, index)[0]
-      .replace("{z}", "12")
-      .replace("{x}", "2048")
-      .replace("{y}", "1363");
-    console.log("Sample Gamma tile:", sample);
-  })();
-</script>
+  <h1>Welcome to Gamma Earth's API Tools</h1>
+  <ul>
+    <ul>
+      <li><h2>Inference</h2></li>
+      <li><a href="https://colab.research.google.com/drive/18phbwA1iYG5VDGN2WjK7WrWYi-FdCHJ5" target="_blank">S2DR3 Trial on Google Colab</a></li>
+    </ul>
+    <ul>
+      <li><h2>Visualization</h2></li>
+      <li><b>Two Date Compare:</b> compares two ouputs processed with S2DR3 in Google Colab in a vertical slider. Example: <a href="https://loremar.github.io/gamma-earth-api/DOCS/S2DR3_date_compare.html?ds=MG-T38KMC-e0a95e3ea&d1=20230816&d2=20250815&index=rgb#15/-20.5228/45.023" target="_blank">Reforestation in Madagascar 2018-2025</a></li>
+      <li><b>Timelapse Video:</b> generates a video our of 2+ outputs processes with S2DR3 in Google Colab</li>
+  </ul>
+</ul>
 
 
 </body>
