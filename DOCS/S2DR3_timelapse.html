@@ -123,180 +123,327 @@
   </div>
 
   <div id="thumbs"></div>
+  
+  <script
+    src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js"
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer">
+  </script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/util.min.js"
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer">
+  </script>
 
   <script>
-  // --- Minimal helpers ---
-  const lambdaBase = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
-  const thumbs = document.getElementById("thumbs");
-  const msg = document.getElementById("msg");
-  const DEBUG = true;
-
-  // Canonical list of frames; render from this (sorted, de-duped)
-  const frames = []; // [{ date, idx, z, url }]
-
-  function byDate(a, b) { return a.date.localeCompare(b.date); }
-  function setMsg(t){ msg.textContent = t; }
-  function validDate(s){ return /^\d{8}$/.test(s); }
-  function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
-
-  function renderThumbs() {
-    thumbs.innerHTML = "";
-    frames.sort(byDate).forEach((f, i) => {
-      const wrap = document.createElement("div");
-      wrap.className = "thumb";
-
-      const btn = document.createElement("button");
-      btn.className = "rm";
-      btn.type = "button";
-      btn.title = "Remove";
-      btn.textContent = "×";
-      btn.onclick = () => {
-        frames.splice(i, 1);
-        renderThumbs();
-        setMsg("Removed thumbnail.");
-      };
-
-      const img = document.createElement("img");
-      img.src = f.url;
-
-      const cap = document.createElement("div");
-      cap.className = "cap";
-      cap.textContent = `${nice(f.date)} • ${f.idx.toUpperCase()} • z${f.z}`;
-
-      wrap.append(btn, img, cap);
-      thumbs.appendChild(wrap);
-    });
-  }
-
-  function parseDs(ds){
-    const p = (ds||"").split("-");
-    return { country: p[0], tile: p[1], uid: p[2] };
-  }
-  function productSuffix(idx){
-    if (idx === "rgb") return "_TCI.tif";
-    if (idx === "ndvi") return "_NDVI.tif";
-    if (idx === "irp" || idx === "fcir") return "_IRP.tif";
-    return "_TCI.tif";
-  }
-  function tilesFor(country, tile, uid, date, idx){
-    const P = `${tile}-${uid}-${date}`;
-    const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
-    const suffix = productSuffix(idx);
-    return [`${root}/S2L2Ax10_${P}${suffix}`];
-  }
-
-  // lon/lat → XYZ tile indices at zoom z
-  function lonLatToTile(lon, lat, z) {
-    const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-    const y = Math.floor(
-      ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
-      Math.pow(2, z)
-    );
-    return { x, y };
-  }
-  // tile center lon/lat (inverse)
-  function tileCenterLonLat(z, x, y){
-    const n = Math.pow(2, z);
-    const lon = (x + 0.5) / n * 360 - 180;
-    const t = Math.PI - 2 * Math.PI * (y + 0.5) / n;
-    const lat = (180 / Math.PI) * Math.atan(Math.sinh(t));
-    return { lon, lat };
-  }
-
-  // Probe one date: try current zoom, optionally 12 then 10; resolve only once on first success
-  function probeDate(ds, idx, date, lon, lat, zoom, allowFallback){
-    const { country, tile, uid } = parseDs(ds);
-    if (!country || !tile || !uid) {
-      alert("ds must be COUNTRY-TILE-UID (e.g., MG-T38KMC-e0a95e3ea)");
-      return Promise.resolve({ ok:false });
-    }
-    const tmpl = tilesFor(country, tile, uid, date, idx)[0];
-    const z0 = Math.max(0, Math.round(zoom));
-    const zList = allowFallback ? Array.from(new Set([z0, 12, 10])) : [z0];
-
-    return new Promise((resolve) => {
-      let failures = 0;
-      let done = false; // guard: first success wins
-
-      zList.forEach(zc => {
-        const { x, y } = lonLatToTile(lon, lat, zc);
-        const url = tmpl.replace("{z}", zc).replace("{x}", x).replace("{y}", y)
-                      + (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
-
-        if (DEBUG) console.log(`[probe] ${date} ${idx}@z${zc} x=${x} y=${y} →`, url);
-
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          if (done) return;
-          if (DEBUG) console.log("  ✅ loaded");
-          done = true;
-          resolve({ ok:true, url, z: zc, x, y });
+    // --- Minimal helpers ---
+    const lambdaBase = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
+    const thumbs = document.getElementById("thumbs");
+    const msg = document.getElementById("msg");
+    const encmsg = document.getElementById("encmsg");
+    const barfill = document.getElementById("barfill");
+    const dlMp4 = document.getElementById("dl-mp4");
+    const dlWebm = document.getElementById("dl-webm");
+    const DEBUG = true;
+  
+    // Canonical list of frames; render from this (sorted, de-duped)
+    const frames = []; // [{ date, idx, z, url }]
+  
+    function byDate(a, b) { return a.date.localeCompare(b.date); }
+    function setMsg(t){ msg.textContent = t; }
+    function setEncMsg(t){ encmsg.textContent = t; }
+    function setBar(pct){ barfill.style.width = Math.max(0, Math.min(100, pct)) + "%"; }
+    function validDate(s){ return /^\d{8}$/.test(s); }
+    function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
+  
+    function renderThumbs() {
+      thumbs.innerHTML = "";
+      frames.sort(byDate).forEach((f, i) => {
+        const wrap = document.createElement("div");
+        wrap.className = "thumb";
+  
+        const btn = document.createElement("button");
+        btn.className = "rm";
+        btn.type = "button";
+        btn.title = "Remove";
+        btn.textContent = "×";
+        btn.onclick = () => {
+          frames.splice(i, 1);
+          renderThumbs();
+          setMsg("Removed thumbnail.");
         };
-        img.onerror = () => {
-          if (DEBUG) console.warn("  ❌ failed");
-          failures++;
-          if (failures === zList.length && !done) resolve({ ok:false });
-        };
-        img.src = url;
+  
+        const img = document.createElement("img");
+        img.src = f.url;
+  
+        const cap = document.createElement("div");
+        cap.className = "cap";
+        cap.textContent = `${nice(f.date)} • ${f.idx.toUpperCase()} • z${f.z}`;
+  
+        wrap.append(btn, img, cap);
+        thumbs.appendChild(wrap);
       });
+    }
+  
+    function parseDs(ds){
+      const p = (ds||"").split("-");
+      return { country: p[0], tile: p[1], uid: p[2] };
+    }
+    function productSuffix(idx){
+      if (idx === "rgb") return "_TCI.tif";
+      if (idx === "ndvi") return "_NDVI.tif";
+      if (idx === "irp" || idx === "fcir") return "_IRP.tif";
+      return "_TCI.tif";
+    }
+    function tilesFor(country, tile, uid, date, idx){
+      const P = `${tile}-${uid}-${date}`;
+      const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
+      const suffix = productSuffix(idx);
+      return [`${root}/S2L2Ax10_${P}${suffix}`];
+    }
+  
+    // lon/lat → XYZ tile indices at zoom z
+    function lonLatToTile(lon, lat, z) {
+      const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+      const y = Math.floor(
+        ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
+        Math.pow(2, z)
+      );
+      return { x, y };
+    }
+    // tile center lon/lat (inverse)
+    function tileCenterLonLat(z, x, y){
+      const n = Math.pow(2, z);
+      const lon = (x + 0.5) / n * 360 - 180;
+      const t = Math.PI - 2 * Math.PI * (y + 0.5) / n;
+      const lat = (180 / Math.PI) * Math.atan(Math.sinh(t));
+      return { lon, lat };
+    }
+  
+    // Probe one date: try current zoom, optionally 12 then 10; resolve only once on first success
+    function probeDate(ds, idx, date, lon, lat, zoom, allowFallback){
+      const { country, tile, uid } = parseDs(ds);
+      if (!country || !tile || !uid) {
+        alert("ds must be COUNTRY-TILE-UID (e.g., MG-T38KMC-e0a95e3ea)");
+        return Promise.resolve({ ok:false });
+      }
+      const tmpl = tilesFor(country, tile, uid, date, idx)[0];
+      const z0 = Math.max(0, Math.round(zoom));
+      const zList = allowFallback ? Array.from(new Set([z0, 12, 10])) : [z0];
+  
+      return new Promise((resolve) => {
+        let failures = 0;
+        let done = false; // guard: first success wins
+  
+        zList.forEach(zc => {
+          const { x, y } = lonLatToTile(lon, lat, zc);
+          const url = tmpl.replace("{z}", zc).replace("{x}", x).replace("{y}", y)
+                        + (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
+  
+          if (DEBUG) console.log(`[probe] ${date} ${idx}@z${zc} x=${x} y=${y} →`, url);
+  
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            if (done) return;
+            if (DEBUG) console.log("  ✅ loaded");
+            done = true;
+            resolve({ ok:true, url, z: zc, x, y });
+          };
+          img.onerror = () => {
+            if (DEBUG) console.warn("  ❌ failed");
+            failures++;
+            if (failures === zList.length && !done) resolve({ ok:false });
+          };
+          img.src = url;
+        });
+      });
+    }
+  
+    // --- UI: Add date ---
+    document.getElementById("add").addEventListener("click", async () => {
+      const lon  = parseFloat(document.getElementById("lon").value);
+      const lat  = parseFloat(document.getElementById("lat").value);
+      const zoom = parseInt(document.getElementById("zoom").value, 10);
+      const ds   = (document.getElementById("ds").value || "").trim();
+      const typeUi = document.getElementById("type").value;
+      const idx  = (typeUi === "RGB") ? "rgb" : (typeUi === "IRP") ? "irp" : "ndvi";
+      const date = (document.getElementById("date").value || "").trim();
+      const allowFallback = document.getElementById("fallback").checked;
+      const lockCenter = document.getElementById("lockCenter").checked;
+  
+      // validations
+      if (!ds)                     { alert("Missing output_id (ds)"); return; }
+      if (!validDate(date))        { alert("Date must be YYYYMMDD"); return; }
+      if (!Number.isFinite(lon) || !Number.isFinite(lat)) { alert("Bad lon/lat"); return; }
+      if (!Number.isFinite(zoom))  { alert("Bad zoom"); return; }
+  
+      // de-dup by (date, idx)
+      if (frames.some(f => f.date === date && f.idx === idx)) {
+        alert(`Date ${date} (${idx.toUpperCase()}) is already added.`);
+        return;
+      }
+  
+      setMsg("Probing tiles… (see Console)");
+      const res = await probeDate(ds, idx, date, lon, lat, zoom, allowFallback);
+      if (!res.ok) {
+        setMsg(`No tiles for ${idx.toUpperCase()} on ${nice(date)} at z${zoom}${allowFallback ? " (no fallback worked)" : ""}.`);
+        return;
+      }
+  
+      // Lock inputs to the successful tile center (for reproducibility)
+      if (lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
+        const c = tileCenterLonLat(res.z, res.x, res.y);
+        document.getElementById("lon").value = c.lon.toFixed(6);
+        document.getElementById("lat").value = c.lat.toFixed(6);
+        document.getElementById("zoom").value = String(res.z);
+        setMsg(`Found tiles for ${nice(date)} — z${res.z}. Locked lon/lat to tile center.`);
+      } else {
+        setMsg(`Found tiles for ${nice(date)} — z${res.z}.`);
+      }
+  
+      // Add to state and re-render (sorted)
+      frames.push({ date, idx, z: res.z, url: res.url });
+      renderThumbs();
     });
-  }
-
-  // --- UI: Add date ---
-  document.getElementById("add").addEventListener("click", async () => {
-    const lon  = parseFloat(document.getElementById("lon").value);
-    const lat  = parseFloat(document.getElementById("lat").value);
-    const zoom = parseInt(document.getElementById("zoom").value, 10);
-    const ds   = (document.getElementById("ds").value || "").trim();
-    const typeUi = document.getElementById("type").value;
-    const idx  = (typeUi === "RGB") ? "rgb" : (typeUi === "IRP") ? "irp" : "ndvi";
-    const date = (document.getElementById("date").value || "").trim();
-    const allowFallback = document.getElementById("fallback").checked;
-    const lockCenter = document.getElementById("lockCenter").checked;
-
-    // validations
-    if (!ds)                     { alert("Missing output_id (ds)"); return; }
-    if (!validDate(date))        { alert("Date must be YYYYMMDD"); return; }
-    if (!Number.isFinite(lon) || !Number.isFinite(lat)) { alert("Bad lon/lat"); return; }
-    if (!Number.isFinite(zoom))  { alert("Bad zoom"); return; }
-
-    // de-dup by (date, idx)
-    if (frames.some(f => f.date === date && f.idx === idx)) {
-      alert(`Date ${date} (${idx.toUpperCase()}) is already added.`);
-      return;
+  
+    // Clear all thumbnails + state
+    document.getElementById("clear").addEventListener("click", () => {
+      frames.length = 0;      // reset state
+      renderThumbs();         // reflect in UI
+      setMsg("Cleared all thumbnails.");
+    });
+  
+    // ---------- ffmpeg wiring ----------
+    const { FFmpeg } = self.FFmpeg || {};
+    const { fetchFile } = self.FFmpegUtil || {};
+  
+    let ffmpeg = null;
+    async function getFF() {
+      if (ffmpeg) return ffmpeg;
+      if (!FFmpeg) { alert("FFmpeg not loaded. Check script tags or blockers."); throw new Error("FFmpeg missing"); }
+      ffmpeg = new FFmpeg();
+      ffmpeg.on("log", ({ message }) => {
+        if (message && /frame=|muxing overhead/i.test(message)) setEncMsg(message);
+      });
+      await ffmpeg.load();
+      return ffmpeg;
     }
-
-    setMsg("Probing tiles… (see Console)");
-    const res = await probeDate(ds, idx, date, lon, lat, zoom, allowFallback);
-    if (!res.ok) {
-      setMsg(`No tiles for ${idx.toUpperCase()} on ${nice(date)} at z${zoom}${allowFallback ? " (no fallback worked)" : ""}.`);
-      return;
+  
+    function aspectToWxH(aspect) {
+      if (aspect === "landscape") return { w: 1920, h: 1080 };
+      if (aspect === "vertical")  return { w: 1080, h: 1920 };
+      return { w: 1080, h: 1080 }; // square default
     }
-
-    // Lock inputs to the successful tile center (for reproducibility)
-    if (lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
-      const c = tileCenterLonLat(res.z, res.x, res.y);
-      document.getElementById("lon").value = c.lon.toFixed(6);
-      document.getElementById("lat").value = c.lat.toFixed(6);
-      document.getElementById("zoom").value = String(res.z);
-      setMsg(`Found tiles for ${nice(date)} — z${res.z}. Locked lon/lat to tile center.`);
-    } else {
-      setMsg(`Found tiles for ${nice(date)} — z${res.z}.`);
+  
+    // Fetch all image bytes (as Uint8Array). Requires CORS from tile server.
+    async function fetchImageBytes(url) {
+      const r = await fetch(url, { mode: "cors" });
+      if (!r.ok) throw new Error(`Fetch failed ${r.status}`);
+      const b = await r.arrayBuffer();
+      return new Uint8Array(b);
     }
-
-    // Add to state and re-render (sorted)
-    frames.push({ date, idx, z: res.z, url: res.url });
-    renderThumbs();
-  });
-
-  // Clear all thumbnails + state
-  document.getElementById("clear").addEventListener("click", () => {
-    frames.length = 0;      // reset state
-    renderThumbs();         // reflect in UI
-    setMsg("Cleared all thumbnails.");
-  });
+  
+    // Encode using ffmpeg: write images as frame%03d.jpg and scale/pad to target WxH
+    async function encodeTimelapse(sortedFrames, fps, aspect) {
+      const { w, h } = aspectToWxH(aspect);
+      const ff = await getFF();
+  
+      // Prepare FS
+      try { ff.FS("readdir", "/frames"); } catch { ff.FS("mkdir", "/frames"); }
+      try { ff.FS("readdir", "/out"); }    catch { ff.FS("mkdir", "/out"); }
+  
+      setEncMsg("Downloading frames…");
+      setBar(5);
+  
+      // Download & write frame files
+      for (let i = 0; i < sortedFrames.length; i++) {
+        const f = sortedFrames[i];
+        const bytes = await fetchImageBytes(f.url);
+        const name = `/frames/frame${String(i).padStart(3, "0")}.jpg`;
+        ff.FS("writeFile", name, bytes);
+        setBar(5 + Math.floor((i + 1) / sortedFrames.length * 35)); // up to 40%
+      }
+  
+      // Try MP4 (H.264). Use scale to fit within and pad to exact WxH (letterbox).
+      // pad color: black (0,0,0). You can change to hex by pre-rendering, but ffmpeg needs numeric.
+      setEncMsg("Encoding MP4…");
+      let mp4Data = null, webmData = null;
+  
+      // Filter chain: scale to fit, then pad to exact WxH
+      const vf = `scale=w='min(${w},iw*min(${w}/iw\\,${h}/ih))':h='min(${h},ih*min(${w}/iw\\,${h}/ih))',pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`;
+  
+      try {
+        await ff.run(
+          "-framerate", String(fps),
+          "-i", "/frames/frame%03d.jpg",
+          "-vf", vf,
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-movflags", "+faststart",
+          "/out/timelapse.mp4"
+        );
+        mp4Data = ff.FS("readFile", "/out/timelapse.mp4");
+      } catch (e) {
+        console.warn("MP4 encode failed, falling back to WebM.", e);
+      }
+      setBar(85);
+  
+      if (!mp4Data) {
+        setEncMsg("Encoding WebM fallback…");
+        await ff.run(
+          "-framerate", String(fps),
+          "-i", "/frames/frame%03d.jpg",
+          "-vf", vf,
+          "-c:v", "libvpx-vp9",
+          "-b:v", "2M",
+          "/out/timelapse.webm"
+        );
+        webmData = ff.FS("readFile", "/out/timelapse.webm");
+      }
+      setBar(100);
+  
+      return { mp4Data, webmData };
+    }
+  
+    // --- UI: Generate timelapse ---
+    document.getElementById("gen").addEventListener("click", async () => {
+      if (frames.length === 0) { alert("Add at least one date first."); return; }
+      const fps = Math.max(1, Math.min(60, parseInt(document.getElementById("fps").value || "24", 10)));
+      const aspect = document.getElementById("aspect").value;
+  
+      // Sort frames by date just in case
+      const sorted = [...frames].sort(byDate);
+  
+      // Reset UI
+      setEncMsg("Preparing encoder…");
+      setBar(0);
+      dlMp4.style.display = "none";
+      dlWebm.style.display = "none";
+  
+      try {
+        const { mp4Data, webmData } = await encodeTimelapse(sorted, fps, aspect);
+  
+        if (mp4Data && mp4Data.length) {
+          const blob = new Blob([mp4Data.buffer], { type: "video/mp4" });
+          dlMp4.href = URL.createObjectURL(blob);
+          dlMp4.style.display = "inline-block";
+          setEncMsg("Done! MP4 ready 🎉");
+        } else if (webmData && webmData.length) {
+          const blob = new Blob([webmData.buffer], { type: "video/webm" });
+          dlWebm.href = URL.createObjectURL(blob);
+          dlWebm.style.display = "inline-block";
+          setEncMsg("MP4 not available — WebM provided ✅");
+        } else {
+          setEncMsg("Encoding failed.");
+        }
+      } catch (e) {
+        console.error(e);
+        setEncMsg("Encoding error. See console.");
+      }
+    });
 </script>
+
 
 </body>
 </html>
