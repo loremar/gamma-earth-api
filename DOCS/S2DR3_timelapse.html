@@ -90,149 +90,178 @@
   <div id="thumbs"></div>
 
   <script>
-    // --- Minimal helpers ---
-    const lambdaBase = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
-    const thumbs = document.getElementById("thumbs");
-    const msg = document.getElementById("msg");
-    const DEBUG = true;
+  // --- Minimal helpers ---
+  const lambdaBase = "https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad";
+  const thumbs = document.getElementById("thumbs");
+  const msg = document.getElementById("msg");
+  const DEBUG = true;
 
-    function setMsg(t){ msg.textContent = t; }
-    function validDate(s){ return /^\d{8}$/.test(s); }
+  // Canonical list of frames; render from this (sorted, de-duped)
+  const frames = []; // [{ date, idx, z, url }]
 
-    function parseDs(ds){
-      const p = (ds||"").split("-");
-      return { country: p[0], tile: p[1], uid: p[2] };
-    }
-    function productSuffix(idx){
-      if (idx === "rgb") return "_TCI.tif";
-      if (idx === "ndvi") return "_NDVI.tif";
-      if (idx === "irp" || idx === "fcir") return "_IRP.tif";
-      return "_TCI.tif";
-    }
-    function tilesFor(country, tile, uid, date, idx){
-      const P = `${tile}-${uid}-${date}`;
-      const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
-      const suffix = productSuffix(idx);
-      return [`${root}/S2L2Ax10_${P}${suffix}`];
-    }
+  function byDate(a, b) { return a.date.localeCompare(b.date); }
+  function setMsg(t){ msg.textContent = t; }
+  function validDate(s){ return /^\d{8}$/.test(s); }
+  function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
 
-    // lon/lat → XYZ tile indices at zoom z
-    function lonLatToTile(lon, lat, z) {
-      const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
-      const y = Math.floor(
-        ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
-        Math.pow(2, z)
-      );
-      return { x, y };
-    }
-    // Convert XYZ tile indices back to the tile-center lon/lat
-    function tileCenterLonLat(z, x, y){
-      const n = Math.pow(2, z);
-      const lon = (x + 0.5) / n * 360 - 180;
-      const t = Math.PI - 2 * Math.PI * (y + 0.5) / n;
-      const lat = (180 / Math.PI) * Math.atan(Math.sinh(t));
-      return { lon, lat };
-    }
-    function nice(d){ return `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6)}`; }
+  function renderThumbs() {
+    thumbs.innerHTML = "";
+    frames.sort(byDate).forEach((f, i) => {
+      const wrap = document.createElement("div");
+      wrap.className = "thumb";
 
-    // --- Probe one date: try current zoom, then 12, then 10 ---
-    function probeDate(ds, idx, date, lon, lat, zoom, allowFallback){
-      const { country, tile, uid } = parseDs(ds);
-      if (!country || !tile || !uid) {
-        alert("ds must be COUNTRY-TILE-UID (e.g., MG-T38KMC-e0a95e3ea)");
-        return Promise.resolve({ ok:false });
-      }
-      const tmpl = tilesFor(country, tile, uid, date, idx)[0];
-      const z0 = Math.max(0, Math.round(zoom));
-      const zList = allowFallback ? Array.from(new Set([z0, 12, 10])) : [z0];
+      const btn = document.createElement("button");
+      btn.className = "rm";
+      btn.type = "button";
+      btn.title = "Remove";
+      btn.textContent = "×";
+      btn.onclick = () => {
+        frames.splice(i, 1);
+        renderThumbs();
+        setMsg("Removed thumbnail.");
+      };
 
-      return new Promise((resolve) => {
-        let failures = 0, ok = false;
-        zList.forEach(zc => {
-          const { x, y } = lonLatToTile(lon, lat, zc);
-          const url = tmpl.replace("{z}", zc).replace("{x}", x).replace("{y}", y)
-                        + (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
+      const img = document.createElement("img");
+      img.src = f.url;
 
-          if (DEBUG) console.log(`[probe] ${date} ${idx}@z${zc} x=${x} y=${y} →`, url);
+      const cap = document.createElement("div");
+      cap.className = "cap";
+      cap.textContent = `${nice(f.date)} • ${f.idx.toUpperCase()} • z${f.z}`;
 
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => { 
-            if (DEBUG) console.log("  ✅ loaded");
-            ok = true; 
-            resolve({ ok:true, url, z: zc, x, y }); 
-          };
-          img.onerror = () => {
-            if (DEBUG) console.warn("  ❌ failed");
-            failures++;
-            if (failures === zList.length && !ok) resolve({ ok:false });
-          };
-          img.src = url;
-        });
-      });
-    }
-
-    // --- UI handlers ---
-    document.getElementById("add").addEventListener("click", async () => {
-      const lon  = parseFloat(document.getElementById("lon").value);
-      const lat  = parseFloat(document.getElementById("lat").value);
-      const zoom = parseInt(document.getElementById("zoom").value, 10);
-      const ds   = (document.getElementById("ds").value || "").trim();
-      const typeUi = document.getElementById("type").value;
-      const idx  = (typeUi === "RGB") ? "rgb" : (typeUi === "IRP") ? "irp" : "ndvi";
-      const date = (document.getElementById("date").value || "").trim();
-      const allowFallback = document.getElementById("fallback").checked;
-      const lockCenter = document.getElementById("lockCenter").checked;
-
-      if (!ds)   { alert("Missing output_id (ds)"); return; }
-      if (!/^\d{8}$/.test(date)) { alert("Date must be YYYYMMDD"); return; }
-      if (!Number.isFinite(lon) || !Number.isFinite(lat)) { alert("Bad lon/lat"); return; }
-      if (!Number.isFinite(zoom)) { alert("Bad zoom"); return; }
-
-      setMsg("Probing tiles… (see Console)");
-      const res = await probeDate(ds, idx, date, lon, lat, zoom, allowFallback);
-      if (!res.ok) {
-        setMsg(`No tiles found for ${idx.toUpperCase()} on ${nice(date)} at z${zoom}${allowFallback ? " (no fallback worked)" : ""}.`);
-        return;
-      }
-
-      // lock inputs to the tile center (for the actual z/x/y that succeeded)
-      if (lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
-        const c = tileCenterLonLat(res.z, res.x, res.y);
-        document.getElementById("lon").value = c.lon.toFixed(6);
-        document.getElementById("lat").value = c.lat.toFixed(6);
-        document.getElementById("zoom").value = String(res.z);
-        setMsg(`Found tiles for ${nice(date)} — z${res.z}. Locked lon/lat to tile center.`);
-      } else {
-        setMsg(`Found tiles for ${nice(date)} — z${res.z}.`);
-      }
-
-      // Thumbnail card with per-card remove (×)
-      const wrap = document.createElement("div"); wrap.className = "thumb";
-      const btn = document.createElement("button"); btn.className = "rm"; btn.type="button"; btn.title="Remove"; btn.textContent = "×";
-      const img = document.createElement("img"); img.src = res.url;
-      const cap = document.createElement("div"); cap.className = "cap";
-      cap.textContent = `${nice(date)} • ${idx.toUpperCase()} • z${res.z}`;
       wrap.append(btn, img, cap);
       thumbs.appendChild(wrap);
     });
+  }
 
-    // Clear all thumbnails
-    document.getElementById("clear").addEventListener("click", () => {
-      thumbs.innerHTML = "";
-      setMsg("Cleared all thumbnails.");
-    });
+  function parseDs(ds){
+    const p = (ds||"").split("-");
+    return { country: p[0], tile: p[1], uid: p[2] };
+  }
+  function productSuffix(idx){
+    if (idx === "rgb") return "_TCI.tif";
+    if (idx === "ndvi") return "_NDVI.tif";
+    if (idx === "irp" || idx === "fcir") return "_IRP.tif";
+    return "_TCI.tif";
+  }
+  function tilesFor(country, tile, uid, date, idx){
+    const P = `${tile}-${uid}-${date}`;
+    const root = `${lambdaBase}/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${country}/${tile}/${P}`;
+    const suffix = productSuffix(idx);
+    return [`${root}/S2L2Ax10_${P}${suffix}`];
+  }
 
-    // Event delegation for per-card remove
-    thumbs.addEventListener("click", (e) => {
-      const btn = e.target.closest(".rm");
-      if (!btn) return;
-      const card = btn.closest(".thumb");
-      if (card) {
-        card.remove();
-        setMsg("Removed thumbnail.");
-      }
+  // lon/lat → XYZ tile indices at zoom z
+  function lonLatToTile(lon, lat, z) {
+    const x = Math.floor(((lon + 180) / 360) * Math.pow(2, z));
+    const y = Math.floor(
+      ((1 - Math.log(Math.tan((lat * Math.PI) / 180) + 1 / Math.cos((lat * Math.PI) / 180)) / Math.PI) / 2) *
+      Math.pow(2, z)
+    );
+    return { x, y };
+  }
+  // tile center lon/lat (inverse)
+  function tileCenterLonLat(z, x, y){
+    const n = Math.pow(2, z);
+    const lon = (x + 0.5) / n * 360 - 180;
+    const t = Math.PI - 2 * Math.PI * (y + 0.5) / n;
+    const lat = (180 / Math.PI) * Math.atan(Math.sinh(t));
+    return { lon, lat };
+  }
+
+  // Probe one date: try current zoom, optionally 12 then 10; resolve only once on first success
+  function probeDate(ds, idx, date, lon, lat, zoom, allowFallback){
+    const { country, tile, uid } = parseDs(ds);
+    if (!country || !tile || !uid) {
+      alert("ds must be COUNTRY-TILE-UID (e.g., MG-T38KMC-e0a95e3ea)");
+      return Promise.resolve({ ok:false });
+    }
+    const tmpl = tilesFor(country, tile, uid, date, idx)[0];
+    const z0 = Math.max(0, Math.round(zoom));
+    const zList = allowFallback ? Array.from(new Set([z0, 12, 10])) : [z0];
+
+    return new Promise((resolve) => {
+      let failures = 0;
+      let done = false; // guard: first success wins
+
+      zList.forEach(zc => {
+        const { x, y } = lonLatToTile(lon, lat, zc);
+        const url = tmpl.replace("{z}", zc).replace("{x}", x).replace("{y}", y)
+                      + (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
+
+        if (DEBUG) console.log(`[probe] ${date} ${idx}@z${zc} x=${x} y=${y} →`, url);
+
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          if (done) return;
+          if (DEBUG) console.log("  ✅ loaded");
+          done = true;
+          resolve({ ok:true, url, z: zc, x, y });
+        };
+        img.onerror = () => {
+          if (DEBUG) console.warn("  ❌ failed");
+          failures++;
+          if (failures === zList.length && !done) resolve({ ok:false });
+        };
+        img.src = url;
+      });
     });
-  </script>
+  }
+
+  // --- UI: Add date ---
+  document.getElementById("add").addEventListener("click", async () => {
+    const lon  = parseFloat(document.getElementById("lon").value);
+    const lat  = parseFloat(document.getElementById("lat").value);
+    const zoom = parseInt(document.getElementById("zoom").value, 10);
+    const ds   = (document.getElementById("ds").value || "").trim();
+    const typeUi = document.getElementById("type").value;
+    const idx  = (typeUi === "RGB") ? "rgb" : (typeUi === "IRP") ? "irp" : "ndvi";
+    const date = (document.getElementById("date").value || "").trim();
+    const allowFallback = document.getElementById("fallback").checked;
+    const lockCenter = document.getElementById("lockCenter").checked;
+
+    // validations
+    if (!ds)                     { alert("Missing output_id (ds)"); return; }
+    if (!validDate(date))        { alert("Date must be YYYYMMDD"); return; }
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) { alert("Bad lon/lat"); return; }
+    if (!Number.isFinite(zoom))  { alert("Bad zoom"); return; }
+
+    // de-dup by (date, idx)
+    if (frames.some(f => f.date === date && f.idx === idx)) {
+      alert(`Date ${date} (${idx.toUpperCase()}) is already added.`);
+      return;
+    }
+
+    setMsg("Probing tiles… (see Console)");
+    const res = await probeDate(ds, idx, date, lon, lat, zoom, allowFallback);
+    if (!res.ok) {
+      setMsg(`No tiles for ${idx.toUpperCase()} on ${nice(date)} at z${zoom}${allowFallback ? " (no fallback worked)" : ""}.`);
+      return;
+    }
+
+    // Lock inputs to the successful tile center (for reproducibility)
+    if (lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
+      const c = tileCenterLonLat(res.z, res.x, res.y);
+      document.getElementById("lon").value = c.lon.toFixed(6);
+      document.getElementById("lat").value = c.lat.toFixed(6);
+      document.getElementById("zoom").value = String(res.z);
+      setMsg(`Found tiles for ${nice(date)} — z${res.z}. Locked lon/lat to tile center.`);
+    } else {
+      setMsg(`Found tiles for ${nice(date)} — z${res.z}.`);
+    }
+
+    // Add to state and re-render (sorted)
+    frames.push({ date, idx, z: res.z, url: res.url });
+    renderThumbs();
+  });
+
+  // Clear all thumbnails + state
+  document.getElementById("clear").addEventListener("click", () => {
+    frames.length = 0;      // reset state
+    renderThumbs();         // reflect in UI
+    setMsg("Cleared all thumbnails.");
+  });
+</script>
+
 </body>
 </html>
