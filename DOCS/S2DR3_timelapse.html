@@ -87,7 +87,7 @@
         </select>
       </div>
       <div>
-        <label for="date">Date (YYYYMMDD)</label>
+        <label for="date">Date(s) (YYYYMMDD, comma‑separated)</label>
         <input id="date" type="text" maxlength="8" placeholder="20180812" value="20180812">
       </div>
       <div style="grid-column: span 4; display:flex; align-items:end; gap:10px;">
@@ -200,6 +200,20 @@
     const p = (ds||"").split("-");
     return { country: p[0], tile: p[1], uid: p[2] };
   };
+  
+  // Parse "20230816, 20180812 ,20250815" -> ["20230816","20180812","20250815"]
+  function parseDatesInput(s){
+    const parts = (s || "").split(",").map(t => t.trim()).filter(Boolean);
+    // de-dup while preserving order
+    const seen = new Set();
+    const dates = [];
+    for (const p of parts) {
+      if (!/^\d{8}$/.test(p)) continue; // skip invalid tokens silently
+      if (!seen.has(p)) { seen.add(p); dates.push(p); }
+    }
+    return dates;
+  }
+
   function productSuffix(idx){
     if (idx === "rgb") return "_TCI.tif";
     if (idx === "ndvi") return "_NDVI.tif";
@@ -313,41 +327,62 @@
     const ds   = (document.getElementById("ds").value || "").trim();
     const typeUi = document.getElementById("type").value;
     const idx  = (typeUi === "RGB") ? "rgb" : (typeUi === "IRP") ? "irp" : "ndvi";
-    const date = (document.getElementById("date").value || "").trim();
+    const dateField = (document.getElementById("date").value || "").trim();
     const allowFallback = document.getElementById("fallback").checked;
     const lockCenter = document.getElementById("lockCenter").checked;
-    const preferExact = document.getElementById("preferExact").checked; // NEW
-
+    const preferExact = document.getElementById("preferExact").checked;
+  
+    // Basic validations
     if (!ds) { alert("Missing output_id (ds)"); return; }
-    if (!validDate(date)) { alert("Date must be YYYYMMDD"); return; }
     if (!Number.isFinite(lon) || !Number.isFinite(lat)) { alert("Bad lon/lat"); return; }
     if (!Number.isFinite(zoom)) { alert("Bad zoom"); return; }
-
-    if (frames.some(f => f.date === date && f.idx === idx)) {
-      alert(`Date ${date} (${idx.toUpperCase()}) is already added.`);
+  
+    // Parse dates (comma-separated)
+    const dates = parseDatesInput(dateField);
+    if (dates.length === 0) { alert("Provide at least one valid YYYYMMDD date."); return; }
+  
+    // Filter out dates already present for this index
+    const toLoad = dates.filter(d => !frames.some(f => f.date === d && f.idx === idx));
+    if (toLoad.length === 0) {
+      setMsg("All those dates are already added.");
       return;
     }
-
-    setMsg(`Probing ${idx.toUpperCase()} ${nice(date)} at z${zoom}… (warming if first load)`);
-    const res = await probeDate(ds, idx, date, lon, lat, zoom, allowFallback, preferExact);
-    if (!res.ok) {
-      setMsg(`No tiles for ${idx.toUpperCase()} on ${nice(date)} at z${zoom}${allowFallback ? " (no fallback worked)" : ""}.`);
-      return;
+  
+    let added = 0, missed = 0;
+  
+    // Load each date sequentially (polite + deterministic); same zoom/settings
+    for (const d of toLoad) {
+      setMsg(`Probing ${idx.toUpperCase()} ${nice(d)} at z${zoom}… (warming if first load)`);
+      const res = await probeDate(ds, idx, d, lon, lat, zoom, allowFallback, preferExact);
+  
+      if (!res.ok) {
+        missed++;
+        continue;
+      }
+  
+      // If "lock to tile center" ON, lock to the *first* successful one,
+      // so subsequent dates probe the same z/x/y footprint.
+      if (added === 0 && lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
+        const c = tileCenterLonLat(res.z, res.x, res.y);
+        document.getElementById("lon").value = c.lon.toFixed(6);
+        document.getElementById("lat").value = c.lat.toFixed(6);
+        document.getElementById("zoom").value = String(res.z);
+      }
+  
+      frames.push({ date: d, idx, z: res.z, url: res.url });
+      renderThumbs();
+      added++;
     }
-
-    if (lockCenter && Number.isFinite(res.z) && Number.isFinite(res.x) && Number.isFinite(res.y)) {
-      const c = tileCenterLonLat(res.z, res.x, res.y);
-      document.getElementById("lon").value = c.lon.toFixed(6);
-      document.getElementById("lat").value = c.lat.toFixed(6);
-      document.getElementById("zoom").value = String(res.z);
-      setMsg(`Found tiles for ${nice(date)} — z${res.z}. Locked lon/lat to tile center.`);
+  
+    if (added && !missed) {
+      setMsg(`Added ${added} date(s).`);
+    } else if (added && missed) {
+      setMsg(`Added ${added} date(s). ${missed} not found at requested zoom.`);
     } else {
-      setMsg(`Found tiles for ${nice(date)} — z${res.z}.`);
+      setMsg(`No tiles found for the requested dates at z${zoom}.`);
     }
-
-    frames.push({ date, idx, z: res.z, url: res.url });
-    renderThumbs();
   });
+
 
   document.getElementById("clear").addEventListener("click", () => {
     frames.length = 0;
