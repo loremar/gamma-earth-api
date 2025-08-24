@@ -324,7 +324,7 @@
       } else {
         // Path B: fallback to ESM wrapper from CDN (works even if UMD global is missing)
         console.warn("Local UMD not detected; falling back to ESM import from CDN…");
-        const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/esm/index.js");
+        const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
         if (!mod || typeof mod.createFFmpeg !== "function") {
           throw new Error("Failed to load FFmpeg ESM wrapper from CDN");
         }
