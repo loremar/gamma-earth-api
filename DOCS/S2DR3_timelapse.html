@@ -332,7 +332,7 @@
       }
     
       // Load the core from CDN (ESM build). No need to host the 32 MB .wasm yourself.
-      const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/esm/ffmpeg-core.js";
+      const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
     
       const inst = createFFmpeg({ log: true, corePath });
       inst.on?.("log", ({ message }) => {
