@@ -328,7 +328,7 @@
       return;
     }
 
-    setMsg("Probing tiles… (see Console)");
+    setMsg(`Probing ${idx.toUpperCase()} ${nice(date)} at z${zoom}… (warming if first load)`);
     const res = await probeDate(ds, idx, date, lon, lat, zoom, allowFallback, preferExact);
     if (!res.ok) {
       setMsg(`No tiles for ${idx.toUpperCase()} on ${nice(date)} at z${zoom}${allowFallback ? " (no fallback worked)" : ""}.`);
