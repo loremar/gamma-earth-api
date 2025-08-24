@@ -313,25 +313,27 @@
     // -------- ffmpeg loader: use local UMD if present, else fall back to CDN ESM --------
     let ffmpeg = null;
     
+    let ffmpeg = null;
+
     async function getFF() {
       if (ffmpeg) return ffmpeg;
     
       let createFFmpeg = null;
-      // Path A: local UMD wrapper populated a global (preferred)
+    
+      // Try local UMD first (if you want to keep ffmpeg.js in your repo)
       if (window.FFmpeg && typeof window.FFmpeg.createFFmpeg === "function") {
         console.log("Using local UMD FFmpeg wrapper");
         createFFmpeg = window.FFmpeg.createFFmpeg;
       } else {
-        // Path B: fallback to ESM wrapper from CDN (works even if UMD global is missing)
-        console.warn("Local UMD not detected; falling back to ESM import from CDN…");
-        const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
+        console.warn("Local UMD not detected; falling back to ESM import from jsDelivr…");
+        const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/esm/ffmpeg.min.js");
         if (!mod || typeof mod.createFFmpeg !== "function") {
-          throw new Error("Failed to load FFmpeg ESM wrapper from CDN");
+          throw new Error("Failed to load FFmpeg ESM wrapper from jsDelivr");
         }
         createFFmpeg = mod.createFFmpeg;
       }
     
-      // Load the core from CDN (ESM build). No need to host the 32 MB .wasm yourself.
+      // Correct core path (esm under dist/)
       const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
     
       const inst = createFFmpeg({ log: true, corePath });
@@ -344,6 +346,7 @@
       console.log("✅ ffmpeg loaded (core:", corePath, ")");
       return ffmpeg;
     }
+
 
 
 
