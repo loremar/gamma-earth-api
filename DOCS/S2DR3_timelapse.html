@@ -232,23 +232,40 @@
     return { lon, lat };
   }
 
-  // Load one image with timeout; resolves { ok, url }
-  function loadImg(url, timeoutMs = 2500){
-    return new Promise((resolve) => {
+  // Load an image with timeout; resolve { ok, url }.
+  // Optional retryDelays: extra attempts after the first timeout.
+  // e.g. [2000, 4000] => try once (t0), then again after 2s (t1), then again after 4s (t2).
+  async function loadImgWithRetry(url, firstTimeoutMs = 2500, retryDelays = []) {
+    const tryOnce = (u, toMs) => new Promise((resolve) => {
       const img = new Image();
-      let done = false;
-      const finish = (ok) => { if (!done) { done = true; resolve({ ok, url }); } };
-      const to = setTimeout(() => finish(false), timeoutMs);
-      img.onload  = () => { clearTimeout(to); finish(true); };
-      img.onerror = () => { clearTimeout(to); finish(false); };
+      let settled = false;
+      const done = (ok) => { if (!settled) { settled = true; resolve({ ok, url: u }); } };
+      const to = setTimeout(() => done(false), toMs);
+      img.onload  = () => { clearTimeout(to); done(true); };
+      img.onerror = () => { clearTimeout(to); done(false); };
       img.crossOrigin = "anonymous";
-      img.src = url;
+      img.src = u;
     });
+  
+    // first attempt
+    let res = await tryOnce(url, firstTimeoutMs);
+    if (res.ok) return res;
+  
+    // retries (same URL; server likely warming up)
+    for (const extraMs of retryDelays) {
+      // small pause before retry
+      await new Promise(r => setTimeout(r, 120));
+      res = await tryOnce(url, extraMs);
+      if (res.ok) return res;
+    }
+    return res; // last failure
   }
 
+
   // Probe a date at target zoom; optionally fallback to 12,10.
-  // preferExact=true -> sequential (z → 12 → 10); false -> parallel with head‑starts.
-  async function probeDate(ds, idx, date, lon, lat, zoom, allowFallback, preferExact){
+  // Sequential probe with strong preference for the requested zoom.
+  // We *retry* the exact zoom a few times (progressive timeouts) before falling back.
+  async function probeDate(ds, idx, date, lon, lat, zoom, allowFallback, preferExact) {
     const { country, tile, uid } = parseDs(ds);
     if (!country || !tile || !uid) {
       alert("ds must be COUNTRY-TILE-UID (e.g., MG-T38KMC-e0a95e3ea)");
@@ -257,45 +274,34 @@
     const tmpl = tilesFor(country, tile, uid, date, idx)[0];
     const z0 = Math.max(0, Math.round(zoom));
     const zList = allowFallback ? [z0, 12, 10].filter((z, i, a) => a.indexOf(z) === i) : [z0];
-
+  
     const urlForZ = (zc) => {
       const { x, y } = lonLatToTile(lon, lat, zc);
       const url = tmpl.replace("{z}", zc).replace("{x}", x).replace("{y}", y) +
                   (tmpl.includes("?") ? "&" : "?") + "_cb=" + Date.now();
       return { url, x, y, z: zc };
     };
-
-    if (preferExact || zList.length === 1) {
-      // --- A) Sequential: guarantee highest zoom that succeeds ---
-      for (const zc of zList) {
-        const meta = urlForZ(zc);
-        if (DEBUG) console.log(`[probe:seq] ${date} ${idx}@z${zc} x=${meta.x} y=${meta.y} →`, meta.url);
-        const res = await loadImg(meta.url, 2500);
-        if (res.ok) return { ok:true, url: meta.url, z: meta.z, x: meta.x, y: meta.y };
-      }
-      return { ok:false };
+  
+    // Always sequential; preferExact translates to "try harder on exact zoom"
+    const exact = urlForZ(zList[0]);
+  
+    // Heavier retries for the exact zoom (tune these if needed)
+    // First try 3.5s, then 5.5s, then 7.5s. This usually covers cold starts.
+    if (DEBUG) console.log(`[probe:seq] exact z${exact.z} ${date} →`, exact.url);
+    let res = await loadImgWithRetry(exact.url, 3500, preferExact ? [5500, 7500] : [2500]);
+    if (res.ok) return { ok:true, url: exact.url, z: exact.z, x: exact.x, y: exact.y };
+  
+    // Only after exhausting exact zoom, try the remaining fallbacks (shorter timeouts)
+    for (let i = 1; i < zList.length; i++) {
+      const alt = urlForZ(zList[i]);
+      if (DEBUG) console.log(`[probe:seq] fallback z${alt.z} ${date} →`, alt.url);
+      res = await loadImgWithRetry(alt.url, 2500, [3500]);
+      if (res.ok) return { ok:true, url: alt.url, z: alt.z, x: alt.x, y: alt.y };
     }
-
-    // --- B) Parallel w/ head‑starts: give target zoom a lead ---
-    const delays = [0, 700, 1200]; // z, 12, 10
-    const candidates = zList.slice(0,3).map((zc, i) => ({ ...urlForZ(zc), delay: delays[i] || delays.at(-1) }));
-
-    return await new Promise((resolve) => {
-      let settled = false;
-      const fails = new Set();
-      for (const c of candidates) {
-        setTimeout(async () => {
-          if (settled) return;
-          if (DEBUG) console.log(`[probe:par] ${date} ${idx}@z${c.z} (delay ${c.delay}ms) →`, c.url);
-          const res = await loadImg(c.url, 2500);
-          if (settled) return;
-          if (res.ok) { settled = true; resolve({ ok:true, url:c.url, z:c.z, x:c.x, y:c.y }); return; }
-          fails.add(c.z);
-          if (fails.size === candidates.length && !settled) resolve({ ok:false });
-        }, c.delay);
-      }
-    });
+  
+    return { ok:false };
   }
+
 
   /* =======================
      3) Add/clear UI actions
