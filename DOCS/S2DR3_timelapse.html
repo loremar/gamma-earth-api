@@ -124,16 +124,9 @@
 
   <div id="thumbs"></div>
   
-  <script
-    src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js"
-    crossorigin="anonymous"
-    referrerpolicy="no-referrer">
-  </script>
-  <script
-    src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/util.min.js"
-    crossorigin="anonymous"
-    referrerpolicy="no-referrer">
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/util.min.js" crossorigin="anonymous"></script>
+
 
   <script>
     // --- Minimal helpers ---
@@ -315,13 +308,17 @@
     });
   
     // ---------- ffmpeg wiring ----------
-    const { FFmpeg } = self.FFmpeg || {};
-    const { fetchFile } = self.FFmpegUtil || {};
-  
+    const FFmpeg = window.FFmpeg;
+    const FFmpegUtil = window.FFmpegUtil;
+    const { fetchFile } = FFmpegUtil;
+    
     let ffmpeg = null;
     async function getFF() {
       if (ffmpeg) return ffmpeg;
-      if (!FFmpeg) { alert("FFmpeg not loaded. Check script tags or blockers."); throw new Error("FFmpeg missing"); }
+      if (!FFmpeg) {
+        alert("FFmpeg not loaded. Check script tags or blockers.");
+        throw new Error("FFmpeg missing");
+      }
       ffmpeg = new FFmpeg();
       ffmpeg.on("log", ({ message }) => {
         if (message && /frame=|muxing overhead/i.test(message)) setEncMsg(message);
@@ -329,6 +326,7 @@
       await ffmpeg.load();
       return ffmpeg;
     }
+
   
     function aspectToWxH(aspect) {
       if (aspect === "landscape") return { w: 1920, h: 1080 };
