@@ -310,7 +310,7 @@
       setMsg("Cleared all thumbnails.");
     });
   
-    // -------- ffmpeg loader: use local UMD if present, else fall back to CDN ESM --------
+    // One global instance
     let ffmpeg = null;
     
     async function getFF() {
@@ -319,24 +319,53 @@
       console.log("Loading ffmpeg from jsDelivr ESM…");
       const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
     
-      // Grab createFFmpeg from the named export
-      const { createFFmpeg } = mod;
-      if (typeof createFFmpeg !== "function") {
-        throw new Error("createFFmpeg not found in module exports");
+      // Try every known export shape
+      const coreESM = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+    
+      // Case A: named export createFFmpeg (preferred ESM API)
+      if (typeof mod.createFFmpeg === "function") {
+        const inst = mod.createFFmpeg({ log: true, corePath: coreESM });
+        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+        await inst.load();
+        ffmpeg = inst;
+        console.log("✅ ffmpeg loaded via createFFmpeg (core:", coreESM, ")");
+        return ffmpeg;
       }
     
-      const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+      // Case B: named export FFmpeg class
+      if (typeof mod.FFmpeg === "function") {
+        const inst = new mod.FFmpeg();
+        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+        await inst.load({ coreURL: coreESM }); // class API expects coreURL
+        ffmpeg = inst;
+        console.log("✅ ffmpeg loaded via FFmpeg class (core:", coreESM, ")");
+        return ffmpeg;
+      }
     
-      const inst = createFFmpeg({ log: true, corePath });
-      inst.on?.("log", ({ message }) => {
-        if (message && typeof setEncMsg === "function") setEncMsg(message);
-      });
+      // Case C: default export namespace
+      const d = mod.default || {};
+      if (typeof d.createFFmpeg === "function") {
+        const inst = d.createFFmpeg({ log: true, corePath: coreESM });
+        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+        await inst.load();
+        ffmpeg = inst;
+        console.log("✅ ffmpeg loaded via default.createFFmpeg (core:", coreESM, ")");
+        return ffmpeg;
+      }
+      if (typeof d.FFmpeg === "function") {
+        const inst = new d.FFmpeg();
+        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+        await inst.load({ coreURL: coreESM });
+        ffmpeg = inst;
+        console.log("✅ ffmpeg loaded via default.FFmpeg (core:", coreESM, ")");
+        return ffmpeg;
+      }
     
-      await inst.load();
-      ffmpeg = inst;
-      console.log("✅ ffmpeg loaded (core:", corePath, ")");
-      return ffmpeg;
+      // If we got here, print what we actually received to the console for debugging
+      console.error("ffmpeg module exports:", Object.keys(mod), "default keys:", Object.keys(d));
+      throw new Error("Could not find createFFmpeg or FFmpeg in module exports");
     }
+
 
   
     function aspectToWxH(aspect) {
