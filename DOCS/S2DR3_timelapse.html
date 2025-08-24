@@ -193,6 +193,24 @@
     });
   }
 
+  async function ffLoadFontOnce(ff) {
+    // make sure /fonts exists
+    await ffEnsureDir(ff, "/fonts");
+  
+    // cache so we don’t re-fetch each time
+    if (ff.__fontLoaded) return;
+  
+    const fontUrl = "./vendor/fonts/DejaVuSans.ttf";
+    const resp = await fetch(fontUrl);
+    if (!resp.ok) throw new Error(`Font fetch failed: ${resp.status}`);
+    const buf = new Uint8Array(await resp.arrayBuffer());
+  
+    // write into ffmpeg FS
+    await ffWrite(ff, "/fonts/DejaVuSans.ttf", buf);
+    ff.__fontLoaded = true;
+  }
+    
+
   /* ========================
      1) Tile URL construction
      ======================== */
@@ -476,17 +494,47 @@
 
     await ffEnsureDir(ff, "/frames");
     await ffEnsureDir(ff, "/out");
+    // Ensure our font is available to draw text overlays
+    await ffLoadFontOnce(ff);
 
     setEncMsg("Downloading frames…");
     setBar(5);
 
+    // Download, then overlay date + attribution into each frame (pre-render)
+    // Note: we overlay at the tile's native size; the later scale/pad will resize it.
     for (let i = 0; i < sortedFrames.length; i++) {
       const f = sortedFrames[i];
+      const rawName = `/frames/raw${String(i).padStart(3, "0")}.jpg`;
+      const outName = `/frames/frame${String(i).padStart(3, "0")}.jpg`;
+    
+      // fetch tile image
       const bytes = await fetchImageBytes(f.url);
-      const name = `/frames/frame${String(i).padStart(3, "0")}.jpg`;
-      await ffWrite(ff, name, bytes);
-      setBar(5 + Math.floor((i + 1) / sortedFrames.length * 35)); // → 40%
+      await ffWrite(ff, rawName, bytes);
+    
+      const dateLabel = nice(f.date); // e.g., 2023-08-16
+    
+      // drawtext:
+      //  - top center date at y=30
+      //  - © Gamma Earth bottom-right with 20px margins
+      const overlayVf =
+        `drawtext=fontfile=/fonts/DejaVuSans.ttf:text='${dateLabel}':` +
+        `x=(w-text_w)/2:y=30:fontsize=36:fontcolor=white:borderw=2,` +
+        `drawtext=fontfile=/fonts/DejaVuSans.ttf:text='© Gamma Earth':` +
+        `x=w-tw-20:y=h-th-20:fontsize=24:fontcolor=white:borderw=2`;
+    
+      // run a tiny per-image render to bake the labels
+      await ffRun(
+        ff,
+        "-y",
+        "-i", rawName,
+        "-vf", overlayVf,
+        "-frames:v", "1",
+        outName
+      );
+    
+      setBar(5 + Math.floor((i + 1) / sortedFrames.length * 35)); // up to 40%
     }
+
 
     const vf = `scale=w='min(${w},iw*min(${w}/iw\\,${h}/ih))':h='min(${h},ih*min(${w}/iw\\,${h}/ih))',pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black`;
 
