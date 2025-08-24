@@ -310,27 +310,68 @@
       setMsg("Cleared all thumbnails.");
     });
   
-    // One global instance
+    // One shared instance for the page
     let ffmpeg = null;
-
+    
     async function getFF() {
       if (ffmpeg) return ffmpeg;
     
-      console.log("Loading ffmpeg wrapper from same-origin…");
-      // Import the wrapper from YOUR repo so its worker.js is same-origin
-      const { createFFmpeg } = await import("./vendor/ffmpeg/esm/index.js");
+      // 1) Import your local ESM wrapper so its worker.js is same-origin
+      const wrapperUrl = "./vendor/ffmpeg/esm/index.js?v=1"; // cache-bust while iterating
+      console.log("Importing wrapper:", wrapperUrl);
+      const mod = await import(wrapperUrl);
     
-      // Core can stay on CDN (esm under dist/)
-      const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+      // Print what we actually got (one-time diagnostics)
+      try {
+        console.log(
+          "FF wrapper exports:",
+          Object.keys(mod),
+          "default keys:",
+          mod && mod.default ? Object.keys(mod.default) : "(no default)"
+        );
+      } catch {}
     
-      const inst = createFFmpeg({ log: true, corePath });
-      inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+      // 2) Pick a working constructor/creator no matter the shape
+      const create = (typeof mod.createFFmpeg === "function")
+        ? mod.createFFmpeg
+        : (mod.default && typeof mod.default.createFFmpeg === "function")
+          ? mod.default.createFFmpeg
+          : null;
     
-      await inst.load();
-      ffmpeg = inst;
-      console.log("✅ ffmpeg loaded (core:", corePath, ")");
-      return ffmpeg;
+      const Klass = (typeof mod.FFmpeg === "function")
+        ? mod.FFmpeg
+        : (mod.default && typeof mod.default.FFmpeg === "function")
+          ? mod.default.FFmpeg
+          : null;
+    
+      // 3) Core stays on CDN (ESM under dist/)
+      const coreESM = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+    
+      // 4) Prefer the ESM helper API
+      if (create) {
+        const inst = create({ log: true, corePath: coreESM });
+        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+        await inst.load();
+        ffmpeg = inst;
+        console.log("✅ ffmpeg loaded via createFFmpeg (core:", coreESM, ")");
+        return ffmpeg;
+      }
+    
+      // 5) Fallback: class-style API
+      if (Klass) {
+        const inst = new Klass();
+        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
+        // Class API expects coreURL instead of corePath
+        await inst.load({ coreURL: coreESM });
+        ffmpeg = inst;
+        console.log("✅ ffmpeg loaded via FFmpeg class (core:", coreESM, ")");
+        return ffmpeg;
+      }
+    
+      // 6) If neither shape matched, fail clearly with what we saw
+      throw new Error("FFmpeg wrapper loaded but no createFFmpeg/FFmpeg export was found. See 'FF wrapper exports' log above.");
     }
+
 
 
 
