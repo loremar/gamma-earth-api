@@ -125,7 +125,7 @@
 
   <div id="thumbs"></div>
   
-  <script src="/gamma-earth-api/DOCS/vendor/ffmpeg/ffmpeg.js"></script>
+  
   <script>
     console.log("FF script tag loaded?", document.currentScript && document.currentScript.src);
     console.log("FF global?", !!window.FFmpeg);
@@ -312,59 +312,26 @@
   
     // One global instance
     let ffmpeg = null;
-    
+
     async function getFF() {
       if (ffmpeg) return ffmpeg;
     
-      console.log("Loading ffmpeg from jsDelivr ESM…");
-      const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
+      console.log("Loading ffmpeg wrapper from same-origin…");
+      // Import the wrapper from YOUR repo so its worker.js is same-origin
+      const { createFFmpeg } = await import("./vendor/ffmpeg/esm/index.js");
     
-      // Try every known export shape
-      const coreESM = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
+      // Core can stay on CDN (esm under dist/)
+      const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
     
-      // Case A: named export createFFmpeg (preferred ESM API)
-      if (typeof mod.createFFmpeg === "function") {
-        const inst = mod.createFFmpeg({ log: true, corePath: coreESM });
-        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
-        await inst.load();
-        ffmpeg = inst;
-        console.log("✅ ffmpeg loaded via createFFmpeg (core:", coreESM, ")");
-        return ffmpeg;
-      }
+      const inst = createFFmpeg({ log: true, corePath });
+      inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
     
-      // Case B: named export FFmpeg class
-      if (typeof mod.FFmpeg === "function") {
-        const inst = new mod.FFmpeg();
-        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
-        await inst.load({ coreURL: coreESM }); // class API expects coreURL
-        ffmpeg = inst;
-        console.log("✅ ffmpeg loaded via FFmpeg class (core:", coreESM, ")");
-        return ffmpeg;
-      }
-    
-      // Case C: default export namespace
-      const d = mod.default || {};
-      if (typeof d.createFFmpeg === "function") {
-        const inst = d.createFFmpeg({ log: true, corePath: coreESM });
-        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
-        await inst.load();
-        ffmpeg = inst;
-        console.log("✅ ffmpeg loaded via default.createFFmpeg (core:", coreESM, ")");
-        return ffmpeg;
-      }
-      if (typeof d.FFmpeg === "function") {
-        const inst = new d.FFmpeg();
-        inst.on?.("log", ({ message }) => { if (message) setEncMsg?.(message); });
-        await inst.load({ coreURL: coreESM });
-        ffmpeg = inst;
-        console.log("✅ ffmpeg loaded via default.FFmpeg (core:", coreESM, ")");
-        return ffmpeg;
-      }
-    
-      // If we got here, print what we actually received to the console for debugging
-      console.error("ffmpeg module exports:", Object.keys(mod), "default keys:", Object.keys(d));
-      throw new Error("Could not find createFFmpeg or FFmpeg in module exports");
+      await inst.load();
+      ffmpeg = inst;
+      console.log("✅ ffmpeg loaded (core:", corePath, ")");
+      return ffmpeg;
     }
+
 
 
   
