@@ -27,6 +27,13 @@
     .thumb .rm:hover { background: rgba(0,0,0,.75); }
   </style>
 </head>
+
+<script src="/gamma-earth-api/DOCS/vendor/ffmpeg/ffmpeg.js"></script>
+<script>
+  console.log("FF script tag loaded?", document.currentScript && document.currentScript.src);
+  console.log("FF global?", !!window.FFmpeg);
+</script>
+  
 <body>
   <h1>S2DR3 Minimal Date Probe</h1>
   <p>Use this to debug “Add date” without any external libraries. Open the browser console to see detailed logs.<br>test dates: 20180812, 20230816, 20250815</p>
@@ -124,11 +131,6 @@
 
   <div id="thumbs"></div>
   
-  <script src="/gamma-earth-api/DOCS/vendor/ffmpeg/ffmpeg.js"></script>
-  <script>
-    console.log("FF script tag loaded?", document.currentScript && document.currentScript.src);
-    console.log("FF global?", !!window.FFmpeg);
-  </script>
 
   <script>
     // --- Minimal helpers ---
