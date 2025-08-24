@@ -124,8 +124,8 @@
 
   <div id="thumbs"></div>
   
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/util.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/ffmpeg.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+  <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/util.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
 
   <script>
@@ -308,9 +308,10 @@
     });
   
     // ---------- ffmpeg wiring ----------
-    const FFmpeg = window.FFmpeg;
-    const FFmpegUtil = window.FFmpegUtil;
-    const { fetchFile } = FFmpegUtil;
+    const FFmpeg = window.FFmpeg;          // class
+    // util is optional; we don't actually need it for your flow
+    const FFmpegUtil = window.FFmpegUtil || {};
+    // const { fetchFile } = FFmpegUtil;   // not used; leave out to avoid errors
     
     let ffmpeg = null;
     async function getFF() {
@@ -326,6 +327,7 @@
       await ffmpeg.load();
       return ffmpeg;
     }
+
 
   
     function aspectToWxH(aspect) {
