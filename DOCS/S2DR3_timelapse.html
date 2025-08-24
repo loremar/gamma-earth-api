@@ -320,7 +320,6 @@
     
       let createFFmpeg = null;
     
-      // Try local UMD first (if you want to keep ffmpeg.js in your repo)
       if (window.FFmpeg && typeof window.FFmpeg.createFFmpeg === "function") {
         console.log("Using local UMD FFmpeg wrapper");
         createFFmpeg = window.FFmpeg.createFFmpeg;
@@ -333,7 +332,6 @@
         createFFmpeg = mod.createFFmpeg;
       }
     
-      // Correct core path (esm under dist/)
       const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
     
       const inst = createFFmpeg({ log: true, corePath });
@@ -346,6 +344,7 @@
       console.log("✅ ffmpeg loaded (core:", corePath, ")");
       return ffmpeg;
     }
+
 
 
 
