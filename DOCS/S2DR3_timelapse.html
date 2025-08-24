@@ -27,12 +27,6 @@
     .thumb .rm:hover { background: rgba(0,0,0,.75); }
   </style>
 </head>
-
-<script src="/gamma-earth-api/DOCS/vendor/ffmpeg/ffmpeg.js"></script>
-<script>
-  console.log("FF script tag loaded?", document.currentScript && document.currentScript.src);
-  console.log("FF global?", !!window.FFmpeg);
-</script>
   
 <body>
   <h1>S2DR3 Minimal Date Probe</h1>
@@ -131,6 +125,11 @@
 
   <div id="thumbs"></div>
   
+  <script src="/gamma-earth-api/DOCS/vendor/ffmpeg/ffmpeg.js"></script>
+  <script>
+    console.log("FF script tag loaded?", document.currentScript && document.currentScript.src);
+    console.log("FF global?", !!window.FFmpeg);
+  </script>  
 
   <script>
     // --- Minimal helpers ---
@@ -311,42 +310,41 @@
       setMsg("Cleared all thumbnails.");
     });
   
-    // ---------- ffmpeg.wasm wiring (wrapper is local, core from CDN) ----------
+    // -------- ffmpeg loader: use local UMD if present, else fall back to CDN ESM --------
     let ffmpeg = null;
     
     async function getFF() {
       if (ffmpeg) return ffmpeg;
     
-      const FF = window.FFmpeg; // provided by ./vendor/ffmpeg/ffmpeg.js
-      if (!FF || !FF.createFFmpeg) {
-        alert("FFmpeg wrapper not found. Check ./vendor/ffmpeg/ffmpeg.js");
-        throw new Error("FFmpeg wrapper missing");
-      }
-    
-      // Try unpkg first, then jsDelivr as fallback
-      const CDNS = [
-        "https://unpkg.com/@ffmpeg/core@0.12.10/umd/ffmpeg-core.js",
-        "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/umd/ffmpeg-core.js"
-      ];
-    
-      let lastErr;
-      for (const corePath of CDNS) {
-        try {
-          const inst = FF.createFFmpeg({ log: true, corePath });
-          inst.on("log", ({ message }) => {
-            if (message && typeof setEncMsg === "function") setEncMsg(message);
-          });
-          await inst.load();
-          ffmpeg = inst;
-          console.log("✅ ffmpeg-core loaded from:", corePath);
-          return ffmpeg;
-        } catch (e) {
-          console.warn("⚠️ core load failed from", corePath, e);
-          lastErr = e;
+      let createFFmpeg = null;
+      // Path A: local UMD wrapper populated a global (preferred)
+      if (window.FFmpeg && typeof window.FFmpeg.createFFmpeg === "function") {
+        console.log("Using local UMD FFmpeg wrapper");
+        createFFmpeg = window.FFmpeg.createFFmpeg;
+      } else {
+        // Path B: fallback to ESM wrapper from CDN (works even if UMD global is missing)
+        console.warn("Local UMD not detected; falling back to ESM import from CDN…");
+        const mod = await import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/esm/index.js");
+        if (!mod || typeof mod.createFFmpeg !== "function") {
+          throw new Error("Failed to load FFmpeg ESM wrapper from CDN");
         }
+        createFFmpeg = mod.createFFmpeg;
       }
-      throw lastErr || new Error("Unable to load ffmpeg-core.js from any CDN");
+    
+      // Load the core from CDN (ESM build). No need to host the 32 MB .wasm yourself.
+      const corePath = "https://unpkg.com/@ffmpeg/core@0.12.10/esm/ffmpeg-core.js";
+    
+      const inst = createFFmpeg({ log: true, corePath });
+      inst.on?.("log", ({ message }) => {
+        if (message && typeof setEncMsg === "function") setEncMsg(message);
+      });
+    
+      await inst.load();
+      ffmpeg = inst;
+      console.log("✅ ffmpeg loaded (core:", corePath, ")");
+      return ffmpeg;
     }
+
 
 
 
