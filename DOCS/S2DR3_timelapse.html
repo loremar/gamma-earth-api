@@ -324,7 +324,7 @@
       } else {
         // Path B: fallback to ESM wrapper from CDN (works even if UMD global is missing)
         console.warn("Local UMD not detected; falling back to ESM import from CDN…");
-        const mod = await import("https://unpkg.com/@ffmpeg/ffmpeg@0.12.15/esm/index.js");
+        const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/esm/index.js");
         if (!mod || typeof mod.createFFmpeg !== "function") {
           throw new Error("Failed to load FFmpeg ESM wrapper from CDN");
         }
@@ -332,7 +332,7 @@
       }
     
       // Load the core from CDN (ESM build). No need to host the 32 MB .wasm yourself.
-      const corePath = "https://unpkg.com/@ffmpeg/core@0.12.10/esm/ffmpeg-core.js";
+      const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/esm/ffmpeg-core.js";
     
       const inst = createFFmpeg({ log: true, corePath });
       inst.on?.("log", ({ message }) => {
