@@ -312,12 +312,18 @@
   
     // -------- ffmpeg loader: use local UMD if present, else fall back to CDN ESM --------
     let ffmpeg = null;
-
+    
     async function getFF() {
       if (ffmpeg) return ffmpeg;
     
       console.log("Loading ffmpeg from jsDelivr ESM…");
-      const { createFFmpeg } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
+      const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
+    
+      // Grab createFFmpeg from the named export
+      const { createFFmpeg } = mod;
+      if (typeof createFFmpeg !== "function") {
+        throw new Error("createFFmpeg not found in module exports");
+      }
     
       const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
     
