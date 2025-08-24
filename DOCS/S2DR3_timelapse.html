@@ -312,23 +312,12 @@
   
     // -------- ffmpeg loader: use local UMD if present, else fall back to CDN ESM --------
     let ffmpeg = null;
-    
+
     async function getFF() {
       if (ffmpeg) return ffmpeg;
     
-      let createFFmpeg = null;
-    
-      if (window.FFmpeg && typeof window.FFmpeg.createFFmpeg === "function") {
-        console.log("Using local UMD FFmpeg wrapper");
-        createFFmpeg = window.FFmpeg.createFFmpeg;
-      } else {
-        console.warn("Local UMD not detected; falling back to ESM import from jsDelivr…");
-        const mod = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/esm/ffmpeg.min.js");
-        if (!mod || typeof mod.createFFmpeg !== "function") {
-          throw new Error("Failed to load FFmpeg ESM wrapper from jsDelivr");
-        }
-        createFFmpeg = mod.createFFmpeg;
-      }
+      console.log("Loading ffmpeg from jsDelivr ESM…");
+      const { createFFmpeg } = await import("https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js");
     
       const corePath = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js";
     
@@ -342,11 +331,6 @@
       console.log("✅ ffmpeg loaded (core:", corePath, ")");
       return ffmpeg;
     }
-
-
-
-
-
 
   
     function aspectToWxH(aspect) {
