@@ -50,11 +50,13 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script>
+    'use strict';
+
     const CONFIG = {
       API_BASE: "https://s2dr3-job-20250428-862134799361.europe-west1.run.app",
       STATUS_URL: (userId, jobId) => `${CONFIG.API_BASE}/${userId}/${jobId}`,
       TILE_URL: (product, mgrs, sid, pid) => `https://kgbbmarmdgv53gdb47pls2v2oe0qotcs.lambda-url.eu-central-1.on.aws/cog/tiles/WebMercatorQuad/{z}/{x}/{y}@2x?url=s3://sentinel-s2dr3/${mgrs}/${sid}/${pid}/S2L2A_${pid}_${product}.tif`,
-      TRIAL_USER_ID: "trial" // fallback user ID for trial version
+      TRIAL_USER_ID: "trial"
     };
 
     const map = L.map('map').setView([45.4642, 9.19], 7);
@@ -77,56 +79,63 @@
     }
 
     function setCardProgress(card, pct, msg) {
-      if (pct != null) card.querySelector('.bar').style.width = pct + '%';
-      if (msg) card.querySelector('.progress-msg').textContent = msg;
+      if (pct != null) { card.querySelector('.bar').style.width = String(pct) + '%'; }
+      if (msg) { card.querySelector('.progress-msg').textContent = msg; }
     }
 
     async function pollJob(userId, jobId, card) {
       let interval = 2000;
       while (true) {
         const resp = await fetch(CONFIG.STATUS_URL(userId, jobId), {cache: 'no-store'});
+        if (!resp.ok) { throw new Error(`Job status HTTP ${resp.status}`); }
         const j = await resp.json();
-        if (j.State === 'completed') {
+        const state = (j.State || j.status || j.state || '').toString();
+        if (state.toLowerCase() === 'completed' || j.done === true) {
           setCardProgress(card, 100, 'Completed');
           return j;
         }
-        setCardProgress(card, null, 'Processing…');
+        setCardProgress(card, null, `State: ${state || 'processing'}…`);
         await new Promise(r => setTimeout(r, interval));
         interval = Math.min(6000, interval * 1.2);
       }
     }
 
     function buildAOI(lat, lon, sizeKm) {
-      const half = (sizeKm/2) / 111.32;
-      const dLon = half / Math.cos(lat * Math.PI / 180);
-      return `${lon-dLon} ${lat-half} ${lon+dLon} ${lat+half}`;
+      const side = Number(sizeKm);
+      const halfDegLat = (side / 2) / 111.32;
+      const halfDegLon = halfDegLat / Math.cos(lat * Math.PI / 180);
+      const minx = lon - halfDegLon;
+      const miny = lat - halfDegLat;
+      const maxx = lon + halfDegLon;
+      const maxy = lat + halfDegLat;
+      return `${minx} ${miny} ${maxx} ${maxy}`;
     }
 
     async function runInference(userId, lat, lon, date, product, aoiSize) {
       const card = addResultCard(date);
       try {
         let payload;
-        if (aoiSize) {
-          payload = { date, aoi: buildAOI(lat, lon, aoiSize) }; // commercial (AOI)
+        if (!Number.isNaN(Number(aoiSize)) && aoiSize > 0) {
+          // commercial (AOI)
+          payload = { date: date, aoi: buildAOI(lat, lon, aoiSize) };
         } else {
-          payload = { date, lat, lon }; // trial (point)
+          // trial (point)
+          payload = { date: date, lat: lat, lon: lon };
         }
+
         const resp = await fetch(`${CONFIG.API_BASE}/${userId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        if (!resp.ok) { throw new Error(`HTTP ${resp.status}`); }
         const data = await resp.json();
         setCardProgress(card, 10, 'Job submitted');
 
-        // Poll until done
         const status = await pollJob(userId, data.job_id, card);
-
-        // Prefer PID/MGRS from status; fall back to initial response
         const pid = status.PID || status.pid || data.PID || data.pid;
         const mgrs = status.MGRS || status.mgrs || data.MGRS || data.mgrs || (pid ? String(pid).split('-')[0] : null);
-        if (!pid || !mgrs) throw new Error('Missing PID/MGRS in job results');
+        if (!pid || !mgrs) { throw new Error('Missing PID/MGRS in job results'); }
         const sid = String(pid).split('-')[1];
         const url = CONFIG.TILE_URL(product, mgrs, sid, pid);
 
@@ -136,48 +145,29 @@
         setCardProgress(card, 100, 'Done');
       } catch (err) {
         card.querySelector('.status').textContent = 'Error';
-        setCardProgress(card, null, err.message || String(err));
+        setCardProgress(card, null, err && err.message ? err.message : String(err));
         console.error(err);
-      }
-    };
-        } else {
-          payload = { date, lat, lon }; // trial mode payload
-        }
-        const resp = await fetch(`${CONFIG.API_BASE}/${userId}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await resp.json();
-        setCardProgress(card, 10, 'Job submitted');
-        const status = await pollJob(userId, data.job_id, card);
-
-        const pid = data.PID;
-        const mgrs = data.MGRS;
-        const sid = pid.split('-')[1];
-        const url = CONFIG.TILE_URL(product, mgrs, sid, pid);
-        const lyr = L.tileLayer(url, { maxZoom: 19, opacity: 0.9 }).addTo(map);
-        overlays.push(lyr);
-        card.querySelector('.status').textContent = 'Loaded';
-      } catch (err) {
-        card.querySelector('.status').textContent = 'Error';
-        setCardProgress(card, null, err.message);
       }
     }
 
     document.getElementById('runBtn').onclick = async () => {
-      const userId = document.getElementById('userId').value.trim() || CONFIG.TRIAL_USER_ID;
+      const userId = (document.getElementById('userId').value || '').trim() || CONFIG.TRIAL_USER_ID;
       const lat = parseFloat(document.getElementById('lat').value);
       const lon = parseFloat(document.getElementById('lon').value);
-      const aoiSize = parseFloat(document.getElementById('aoiSize').value);
-      const dates = document.getElementById('dates').value
-        .split(/[,\n]+/)
-        .map(s => s.trim())
-        .filter(Boolean);
+      const aoiSizeVal = document.getElementById('aoiSize').value.trim();
+      const aoiSize = aoiSizeVal ? parseFloat(aoiSizeVal) : NaN;
+      const rawDates = document.getElementById('dates').value;
+      const dates = rawDates.split(/[\,
+]+/).map(s => s.trim()).filter(Boolean);
       const product = document.getElementById('product').value;
-      if (Number.isNaN(lat) || Number.isNaN(lon)) return alert('Invalid lat/lon');
-      if (!dates.length) return alert('Please enter at least one date');
-      for (const date of dates) await runInference(userId, lat, lon, date, product, aoiSize);
+
+      if (Number.isNaN(lat) || Number.isNaN(lon)) { alert('Invalid lat/lon'); return; }
+      if (!dates.length) { alert('Please enter at least one date'); return; }
+
+      for (const date of dates) {
+        // eslint-disable-next-line no-await-in-loop
+        await runInference(userId, lat, lon, date, product, aoiSize);
+      }
     };
   </script>
 </body>
