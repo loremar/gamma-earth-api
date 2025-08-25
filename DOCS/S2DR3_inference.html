@@ -157,7 +157,7 @@
       const aoiSizeVal = document.getElementById('aoiSize').value.trim();
       const aoiSize = aoiSizeVal ? parseFloat(aoiSizeVal) : NaN;
       const rawDates = document.getElementById('dates').value;
-      const dates = rawDates.split(/[\,
+      const dates = rawDates.split(/[,
 ]+/).map(s => s.trim()).filter(Boolean);
       const product = document.getElementById('product').value;
 
