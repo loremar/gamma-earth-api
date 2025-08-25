@@ -170,8 +170,10 @@
       const lat = parseFloat(document.getElementById('lat').value);
       const lon = parseFloat(document.getElementById('lon').value);
       const aoiSize = parseFloat(document.getElementById('aoiSize').value);
-      const dates = document.getElementById('dates').value.split(/[\,
-]+/).map(s => s.trim()).filter(Boolean);
+      const dates = document.getElementById('dates').value
+        .split(/[,\n]+/)
+        .map(s => s.trim())
+        .filter(Boolean);
       const product = document.getElementById('product').value;
       if (Number.isNaN(lat) || Number.isNaN(lon)) return alert('Invalid lat/lon');
       if (!dates.length) return alert('Please enter at least one date');
